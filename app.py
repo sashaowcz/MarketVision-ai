@@ -23,9 +23,16 @@ st.markdown(f'''<meta name="viewport" content="width=device-width, initial-scale
 <style>
 :root{{--av-red:{RED};--av-red-dark:{RED_DARK};--av-red-light:{RED_LIGHT};--av-ink:{INK}}}
 html,body,[class*="css"]{{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif!important;background:#fff;color:var(--av-ink)}}
-.block-container{{max-width:1120px;padding-top:.85rem;padding-bottom:5rem}}
+.block-container{{max-width:1120px;padding-top:.18rem;padding-bottom:5rem}}
+[data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"]{{display:none!important;height:0!important}}
+#MainMenu{{visibility:hidden!important}}
+[data-testid="stAppViewContainer"]{{padding-top:0!important}}
 h1,h2,h3{{letter-spacing:-.03em;font-weight:680!important;color:var(--av-ink)!important}}
 .av-hero{{padding:.25rem 0 1rem;border-bottom:1px solid #f0e6e6;margin-bottom:.65rem}}
+.av-toprow{{display:flex;align-items:flex-start;justify-content:space-between;gap:.9rem;padding:.85rem 0 .2rem}}
+.av-account-link{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:.52rem .82rem;border:1px solid #e6d2d2;border-radius:14px;text-decoration:none!important;color:var(--av-ink)!important;background:#fff;font-weight:650;white-space:nowrap;margin-top:.95rem}}
+.av-account-link:hover{{border-color:var(--av-red);color:var(--av-red)!important}}
+.av-head-kicker{{font-size:.76rem;letter-spacing:.12em;text-transform:uppercase;color:var(--av-red);font-weight:700;margin:.5rem 0 .45rem}}
 .av-brand{{display:flex;align-items:center;gap:.7rem}}
 .av-logo{{width:42px;height:42px;border-radius:13px;background:var(--av-red);display:grid;place-items:center;color:#fff;font-weight:850;font-size:1.35rem;box-shadow:0 8px 22px rgba(198,40,40,.18)}}
 .av-name{{font-size:2rem;font-weight:760;letter-spacing:-.045em}}
@@ -49,7 +56,7 @@ button[data-baseweb="tab"][aria-selected="true"]{{color:var(--av-red)!important}
 .av-post-body{{font-size:.97rem;line-height:1.5;white-space:pre-wrap;word-break:break-word}}
 .av-share{{margin-top:.7rem;border-left:4px solid var(--av-red);background:#fff7f7;border-radius:12px;padding:10px 12px}}
 .av-share-title{{font-weight:700}} .av-share-meta{{color:#6d5d5d;font-size:.82rem;margin-top:.15rem}}
-.av-ticker-wrap{{overflow:hidden;border-bottom:1px solid #f0e6e6;background:#fff;padding:.38rem 0;margin:-.2rem 0 .55rem}}
+.av-ticker-wrap{{overflow:hidden;border-bottom:1px solid #f0e6e6;background:#fff;padding:.42rem 0;margin:0 0 .3rem;position:relative;z-index:5}}
 .av-ticker-track{{display:flex;width:max-content;gap:1.4rem;animation:avTicker 34s linear infinite;will-change:transform}}
 .av-ticker-item{{white-space:nowrap;font-size:.78rem;font-weight:650;color:#3c3434}}
 .av-ticker-pos{{color:#147a54}}.av-ticker-neg{{color:var(--av-red)}}
@@ -61,7 +68,7 @@ button[data-baseweb="tab"][aria-selected="true"]{{color:var(--av-red)!important}
 .av-perf{{font-size:1.35rem;font-weight:780;letter-spacing:-.03em;margin-top:.45rem}}
 [data-testid="stAlert"]{{border-radius:14px!important}}
 hr{{border-color:#f0e6e6!important}}
-@media(max-width:650px){{.block-container{{padding:.65rem .65rem 5.4rem}}.av-logo{{width:38px;height:38px;border-radius:12px}}.av-name{{font-size:1.65rem}}h1{{font-size:1.7rem!important}}h2{{font-size:1.3rem!important}}h3{{font-size:1.08rem!important}}[data-testid="stHorizontalBlock"]{{gap:.42rem}}[data-testid="stMetric"]{{padding:11px}}[data-testid="stMetricValue"]{{font-size:1.35rem}}div[data-testid="stPlotlyChart"]{{max-width:100%;overflow:hidden}}.av-sub{{font-size:.9rem}}}}
+@media(max-width:650px){{.block-container{{padding:.12rem .65rem 5.4rem}}.av-toprow{{padding:.82rem 0 .15rem;gap:.6rem}}.av-account-link{{margin-top:1.05rem;padding:.48rem .68rem;min-height:40px}}.av-head-kicker{{margin-top:.65rem}}.av-logo{{width:38px;height:38px;border-radius:12px}}.av-name{{font-size:1.65rem}}h1{{font-size:1.7rem!important}}h2{{font-size:1.3rem!important}}h3{{font-size:1.08rem!important}}[data-testid="stHorizontalBlock"]{{gap:.42rem}}[data-testid="stMetric"]{{padding:11px}}[data-testid="stMetricValue"]{{font-size:1.35rem}}div[data-testid="stPlotlyChart"]{{max-width:100%;overflow:hidden}}.av-sub{{font-size:.9rem}}}}
 </style>''', unsafe_allow_html=True)
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -138,26 +145,28 @@ if strip:
     content=''.join(parts)
     st.markdown(f'<div class="av-ticker-wrap"><div class="av-ticker-track">{content}{content}</div></div>', unsafe_allow_html=True)
 
-# En-tête mobile : identité à gauche, compte à droite, directement sous la banderole.
+# En-tête mobile : logo à gauche, compte compact à droite, sous la banderole.
 if 'active_page' not in st.session_state:
     st.session_state.active_page = 'Marchés'
 
-head_left, head_right = st.columns([3.2, 1.15], vertical_alignment='center')
-with head_left:
-    st.markdown('''<div class="av-apphead"><div class="av-brand"><div class="av-logo">A</div><div><div class="av-kicker">Marchés • Risque • Tendances • Alertes</div><div class="av-name">AngelVision</div></div></div></div>''', unsafe_allow_html=True)
-with head_right:
-    account_text = (st.session_state.user.get('display_name') or 'Compte') if st.session_state.user else 'Compte'
-    if st.button(account_text, key='top_account_btn', use_container_width=True):
-        st.session_state.active_page = 'Compte & alertes'
-        st.rerun()
+view_param = st.query_params.get('view', '')
+if view_param == 'account':
+    st.session_state.active_page = 'Compte & alertes'
+elif view_param == 'markets' and st.session_state.active_page == 'Compte & alertes':
+    st.session_state.active_page = 'Marchés'
+
+account_text = (st.session_state.user.get('display_name') or 'Compte') if st.session_state.user else 'Compte'
+st.markdown(f'''<div class="av-toprow">
+  <div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div>
+  <a class="av-account-link" href="?view=account">{html.escape(account_text)}</a>
+</div>
+<div class="av-head-kicker">Marchés • Risque • Tendances • Alertes</div>''', unsafe_allow_html=True)
 
 st.markdown('<div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div><div style="height:.35rem;border-bottom:1px solid #f0e6e6;margin-bottom:.45rem"></div>', unsafe_allow_html=True)
 
 if st.session_state.active_page == 'Compte & alertes':
     page = 'Compte & alertes'
-    if st.button('← Retour aux marchés', key='back_from_account'):
-        st.session_state.active_page = 'Marchés'
-        st.rerun()
+    st.markdown('<a class="av-account-link" style="margin:0 0 .8rem 0" href="?view=markets">← Retour aux marchés</a>', unsafe_allow_html=True)
 else:
     nav_default = 1 if st.session_state.active_page == 'Communauté' else 0
     page = st.radio('Navigation', ['Marchés','Communauté'], horizontal=True, label_visibility='collapsed', index=nav_default, key='main_nav')

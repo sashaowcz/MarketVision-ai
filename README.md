@@ -1,4 +1,4 @@
-# AngelVision AI 2.5 — En-tête mobile corrigé
+# AngelVision AI 2.6 — En-tête mobile corrigé
 
 Application Streamlit mobile-first pour iPhone, Android et ordinateur.
 
@@ -44,3 +44,10 @@ streamlit run app.py
 ## Important
 
 Les données Yahoo Finance peuvent être différées. Les scores, alertes, simulations, propositions et likes servent à analyser ou découvrir des marchés ; ils ne constituent pas des recommandations d'achat ou de vente.
+
+
+## Correctifs 2.6
+
+- La barre Streamlit supérieure est masquée pour rendre la banderole visible dès l’ouverture.
+- Logo AngelVision à gauche et bouton Compte compact à droite.
+- Espace supplémentaire entre le logo et le bouton Compte sur iPhone.
