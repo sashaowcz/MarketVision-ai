@@ -65,11 +65,14 @@ def init_local_db() -> None:
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         display_name TEXT,
+        explanation_level TEXT NOT NULL DEFAULT 'standard',
         created_at TEXT NOT NULL
     )''')
     cols = {row[1] for row in con.execute('PRAGMA table_info(users)').fetchall()}
     if 'display_name' not in cols:
         con.execute('ALTER TABLE users ADD COLUMN display_name TEXT')
+    if 'explanation_level' not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN explanation_level TEXT NOT NULL DEFAULT 'standard'")
     con.execute('''CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -117,6 +120,28 @@ def init_local_db() -> None:
         FOREIGN KEY(proposal_id) REFERENCES market_proposals(id),
         FOREIGN KEY(user_id) REFERENCES users(id)
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS paper_accounts (
+        user_id INTEGER PRIMARY KEY,
+        initial_cash_chf REAL NOT NULL,
+        cash_chf REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS paper_trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        label TEXT NOT NULL,
+        side TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        price_native REAL NOT NULL,
+        currency TEXT NOT NULL,
+        fx_to_chf REAL NOT NULL,
+        price_chf REAL NOT NULL,
+        total_chf REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )""")
     con.commit(); con.close()
 
 
@@ -161,12 +186,12 @@ def create_user(email: str, password: str, display_name: str) -> dict:
         existing = _sb('users', params={'email': f'eq.{email}', 'select': 'id'})
         if existing:
             raise ValueError('Un compte existe déjà avec cet email.')
-        rows = _sb('users', 'POST', payload={'email': email, 'password_hash': hash_password(password), 'display_name': display_name, 'created_at': utcnow_iso()}, prefer='return=representation')
+        rows = _sb('users', 'POST', payload={'email': email, 'password_hash': hash_password(password), 'display_name': display_name, 'explanation_level': 'standard', 'created_at': utcnow_iso()}, prefer='return=representation')
         return rows[0]
     init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
     try:
-        cur = con.execute('INSERT INTO users(email,password_hash,display_name,created_at) VALUES(?,?,?,?)', (email, hash_password(password), display_name, utcnow_iso()))
-        con.commit(); row = con.execute('SELECT id,email,display_name,created_at FROM users WHERE id=?', (cur.lastrowid,)).fetchone(); return dict(row)
+        cur = con.execute('INSERT INTO users(email,password_hash,display_name,explanation_level,created_at) VALUES(?,?,?,?,?)', (email, hash_password(password), display_name, 'standard', utcnow_iso()))
+        con.commit(); row = con.execute('SELECT id,email,display_name,explanation_level,created_at FROM users WHERE id=?', (cur.lastrowid,)).fetchone(); return dict(row)
     except sqlite3.IntegrityError:
         raise ValueError('Un compte existe déjà avec cet email.')
     finally:
@@ -176,15 +201,152 @@ def create_user(email: str, password: str, display_name: str) -> dict:
 def authenticate_user(email: str, password: str) -> dict | None:
     email = email.strip().lower()
     if production_storage_enabled():
-        rows = _sb('users', params={'email': f'eq.{email}', 'select': 'id,email,password_hash,display_name,created_at'})
+        rows = _sb('users', params={'email': f'eq.{email}', 'select': 'id,email,password_hash,display_name,explanation_level,created_at'})
         if not rows or not verify_password(password, rows[0]['password_hash']):
             return None
-        return {k: rows[0].get(k) for k in ('id','email','display_name','created_at')}
+        return {k: rows[0].get(k) for k in ('id','email','display_name','explanation_level','created_at')}
     init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
     row = con.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone(); con.close()
     if row and verify_password(password, row['password_hash']):
-        return {'id': row['id'], 'email': row['email'], 'display_name': row['display_name'], 'created_at': row['created_at']}
+        return {'id': row['id'], 'email': row['email'], 'display_name': row['display_name'], 'explanation_level': row['explanation_level'] if 'explanation_level' in row.keys() else 'standard', 'created_at': row['created_at']}
     return None
+
+
+
+def update_explanation_level(user_id: int, level: str) -> None:
+    level = 'beginner' if level == 'beginner' else 'standard'
+    if production_storage_enabled():
+        _sb('users', 'PATCH', params={'id': f'eq.{user_id}'}, payload={'explanation_level': level}, prefer='return=minimal')
+        return
+    init_local_db(); con = sqlite3.connect(DB_PATH)
+    con.execute('UPDATE users SET explanation_level=? WHERE id=?', (level, user_id)); con.commit(); con.close()
+
+
+def get_paper_account(user_id: int) -> dict | None:
+    if production_storage_enabled():
+        rows = _sb('paper_accounts', params={'user_id': f'eq.{user_id}', 'select': '*'}) or []
+        return rows[0] if rows else None
+    init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
+    row = con.execute('SELECT * FROM paper_accounts WHERE user_id=?', (user_id,)).fetchone(); con.close()
+    return dict(row) if row else None
+
+
+def create_paper_account(user_id: int, initial_cash_chf: float) -> dict:
+    amount = float(initial_cash_chf)
+    if amount < 1000 or amount > 20000:
+        raise ValueError('Le capital virtuel doit être compris entre 1 000 et 20 000 CHF.')
+    if get_paper_account(user_id):
+        raise ValueError('Ton portefeuille d’entraînement existe déjà.')
+    row = {'user_id': user_id, 'initial_cash_chf': amount, 'cash_chf': amount, 'created_at': utcnow_iso()}
+    if production_storage_enabled():
+        rows = _sb('paper_accounts', 'POST', payload=row, prefer='return=representation') or []
+        return rows[0]
+    init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
+    con.execute('INSERT INTO paper_accounts(user_id,initial_cash_chf,cash_chf,created_at) VALUES(?,?,?,?)', (user_id,amount,amount,row['created_at']))
+    con.commit(); out = dict(con.execute('SELECT * FROM paper_accounts WHERE user_id=?',(user_id,)).fetchone()); con.close(); return out
+
+
+def list_paper_trades(user_id: int) -> list[dict]:
+    if production_storage_enabled():
+        return _sb('paper_trades', params={'user_id': f'eq.{user_id}', 'select': '*', 'order': 'created_at.asc'}) or []
+    init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
+    rows=[dict(r) for r in con.execute('SELECT * FROM paper_trades WHERE user_id=? ORDER BY created_at ASC,id ASC',(user_id,)).fetchall()]; con.close(); return rows
+
+
+def paper_positions(user_id: int) -> list[dict]:
+    trades = list_paper_trades(user_id)
+    pos = {}
+    for t in trades:
+        sym=t['symbol']; sign=1.0 if t['side']=='buy' else -1.0; q=float(t['quantity'])*sign
+        d=pos.setdefault(sym, {'symbol':sym,'label':t['label'],'quantity':0.0,'cost_chf':0.0})
+        if t['side']=='buy':
+            d['cost_chf'] += float(t['total_chf'])
+            d['quantity'] += float(t['quantity'])
+        else:
+            old_q=d['quantity']
+            avg=(d['cost_chf']/old_q) if old_q>1e-12 else 0.0
+            d['quantity'] -= float(t['quantity'])
+            d['cost_chf'] -= avg*float(t['quantity'])
+        if abs(d['quantity']) < 1e-9:
+            d['quantity']=0.0; d['cost_chf']=0.0
+    return [v for v in pos.values() if v['quantity']>1e-9]
+
+
+def _quote_currency(symbol: str) -> str:
+    try:
+        fi = yf.Ticker(symbol).fast_info
+        cur = getattr(fi, 'currency', None) or (fi.get('currency') if hasattr(fi,'get') else None)
+        if cur: return str(cur).upper()
+    except Exception:
+        pass
+    return 'USD'
+
+
+def _fx_to_chf(currency: str) -> float:
+    c=(currency or 'USD').upper()
+    if c=='CHF': return 1.0
+    scale=1.0
+    if c=='GBP': symbol='GBPCHF=X'
+    elif c=='GBX' or c=='GBPENCE': symbol='GBPCHF=X'; scale=.01
+    elif c=='USD': symbol='CHF=X'
+    else: symbol=f'{c}CHF=X'
+    try:
+        d=download_prices(symbol,'5d')
+        if not d.empty: return float(d['Close'].iloc[-1])*scale
+    except Exception:
+        pass
+    raise ValueError(f'Conversion {c} → CHF indisponible pour le moment.')
+
+
+def market_quote_chf(symbol: str) -> dict:
+    d=download_prices(symbol,'5d')
+    if d.empty: raise ValueError('Cours indisponible pour cet actif.')
+    price=float(d['Close'].iloc[-1]); currency=_quote_currency(symbol); fx=_fx_to_chf(currency)
+    return {'symbol':symbol,'price_native':price,'currency':currency,'fx_to_chf':fx,'price_chf':price*fx,'asof':str(d.index[-1])}
+
+
+def place_paper_trade(user_id: int, symbol: str, label: str, side: str, amount_chf: float | None = None, quantity: float | None = None) -> dict:
+    side='buy' if side=='buy' else 'sell'
+    account=get_paper_account(user_id)
+    if not account: raise ValueError('Crée d’abord ton portefeuille d’entraînement.')
+    q=market_quote_chf(symbol); price_chf=float(q['price_chf'])
+    if side=='buy':
+        amount=float(amount_chf or 0)
+        if amount < 10: raise ValueError('Montant minimum : 10 CHF virtuels.')
+        if amount > float(account['cash_chf']) + 1e-8: raise ValueError('Solde virtuel insuffisant.')
+        qty=amount/price_chf; total=amount
+        new_cash=float(account['cash_chf'])-total
+    else:
+        qty=float(quantity or 0)
+        if qty<=0: raise ValueError('Quantité invalide.')
+        positions={p['symbol']:p for p in paper_positions(user_id)}
+        available=float(positions.get(symbol,{}).get('quantity',0))
+        if qty>available+1e-9: raise ValueError('Tu ne possèdes pas cette quantité dans ton portefeuille virtuel.')
+        total=qty*price_chf; new_cash=float(account['cash_chf'])+total
+    row={'user_id':user_id,'symbol':symbol,'label':label,'side':side,'quantity':qty,'price_native':q['price_native'],'currency':q['currency'],'fx_to_chf':q['fx_to_chf'],'price_chf':price_chf,'total_chf':total,'created_at':utcnow_iso()}
+    if production_storage_enabled():
+        _sb('paper_trades','POST',payload=row,prefer='return=minimal')
+        _sb('paper_accounts','PATCH',params={'user_id':f'eq.{user_id}'},payload={'cash_chf':new_cash},prefer='return=minimal')
+    else:
+        init_local_db(); con=sqlite3.connect(DB_PATH)
+        con.execute('INSERT INTO paper_trades(user_id,symbol,label,side,quantity,price_native,currency,fx_to_chf,price_chf,total_chf,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)', (user_id,symbol,label,side,qty,q['price_native'],q['currency'],q['fx_to_chf'],price_chf,total,row['created_at']))
+        con.execute('UPDATE paper_accounts SET cash_chf=? WHERE user_id=?',(new_cash,user_id)); con.commit(); con.close()
+    row['cash_after_chf']=new_cash; return row
+
+
+def paper_portfolio_snapshot(user_id: int) -> dict:
+    account=get_paper_account(user_id)
+    if not account: return {'account':None,'positions':[],'positions_value_chf':0.0,'total_value_chf':0.0,'pnl_chf':0.0,'pnl_pct':0.0}
+    out=[]; value=0.0
+    for p in paper_positions(user_id):
+        try:
+            q=market_quote_chf(p['symbol']); market_value=float(p['quantity'])*q['price_chf']; value+=market_value
+            avg=(p['cost_chf']/p['quantity']) if p['quantity'] else 0.0
+            out.append({**p,'current_price_chf':q['price_chf'],'market_value_chf':market_value,'avg_cost_chf':avg,'pnl_chf':market_value-p['cost_chf']})
+        except Exception:
+            out.append({**p,'current_price_chf':None,'market_value_chf':None,'avg_cost_chf':(p['cost_chf']/p['quantity']) if p['quantity'] else 0.0,'pnl_chf':None})
+    total=float(account['cash_chf'])+value; initial=float(account['initial_cash_chf']); pnl=total-initial
+    return {'account':account,'positions':out,'positions_value_chf':value,'total_value_chf':total,'pnl_chf':pnl,'pnl_pct':(pnl/initial if initial else 0.0)}
 
 
 def search_assets(query: str, max_results: int = 10) -> list[dict]:

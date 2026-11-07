@@ -9,6 +9,8 @@ from angelvision_core import (
     download_prices, indicators, list_alerts, production_storage_enabled,
     search_assets, send_email, create_market_proposal, list_market_proposals,
     toggle_market_like, delete_market_proposal, market_strip_snapshot,
+    update_explanation_level, get_paper_account, create_paper_account,
+    paper_portfolio_snapshot, place_paper_trade, list_paper_trades,
 )
 
 RED = '#C62828'
@@ -169,8 +171,80 @@ if st.session_state.active_page == 'Compte & alertes':
     st.markdown('<a class="av-account-link" style="margin:0 0 .8rem 0" href="?view=markets">← Retour aux marchés</a>', unsafe_allow_html=True)
 else:
     nav_default = 1 if st.session_state.active_page == 'Communauté' else 0
-    page = st.radio('Navigation', ['Marchés','Communauté'], horizontal=True, label_visibility='collapsed', index=nav_default, key='main_nav')
+    page = st.radio('Navigation', ['Marchés','Simulation','Communauté'], horizontal=True, label_visibility='collapsed', index=(2 if st.session_state.active_page == 'Communauté' else 1 if st.session_state.active_page == 'Simulation' else 0), key='main_nav')
     st.session_state.active_page = page
+
+if page == 'Simulation':
+    st.subheader('Portefeuille d’entraînement')
+    st.caption('Investis de l’argent fictif avec les vrais cours disponibles pour apprendre sans risquer ton argent. Aucun ordre réel n’est envoyé.')
+    if not st.session_state.user:
+        st.markdown('<div class="av-status"><b>Connecte-toi pour créer ton portefeuille virtuel.</b><br><span class="av-muted">Le portefeuille est lié à ton compte pour conserver tes opérations.</span></div>', unsafe_allow_html=True)
+        st.markdown('<a class="av-account-link" href="?view=account">Ouvrir mon compte</a>', unsafe_allow_html=True)
+        st.stop()
+    user=st.session_state.user
+    beginner=(user.get('explanation_level')=='beginner')
+    account=get_paper_account(user['id'])
+    if not account:
+        st.markdown('<div class="av-score"><strong>Commence avec un capital virtuel réaliste</strong><br><span class="av-muted">Tu choisis entre 1 000 et 20 000 CHF. Ce montant ne pourra pas être dépassé : le but est de s’entraîner dans des conditions crédibles.</span></div>', unsafe_allow_html=True)
+        starting=st.slider('Capital de départ virtuel (CHF)',1000,20000,5000,500)
+        if st.button('Créer mon portefeuille d’entraînement',type='primary',use_container_width=True):
+            try:
+                create_paper_account(user['id'],starting); st.success('Portefeuille virtuel créé.'); st.rerun()
+            except Exception as e: st.error(str(e))
+        st.stop()
+    snap=paper_portfolio_snapshot(user['id']); account=snap['account']
+    c1,c2,c3=st.columns(3)
+    c1.metric('Valeur totale',f"{snap['total_value_chf']:,.2f} CHF",f"{snap['pnl_chf']:+,.2f} CHF")
+    c2.metric('Solde disponible',f"{float(account['cash_chf']):,.2f} CHF")
+    c3.metric('Performance',f"{snap['pnl_pct']:+.2%}")
+    if beginner:
+        st.markdown('<div class="av-status"><b>Mode débutant :</b> “Valeur totale” = ton argent restant + la valeur actuelle de tes investissements. Une performance négative signifie que ton portefeuille virtuel vaut moins que ton capital de départ.</div>',unsafe_allow_html=True)
+    else:
+        st.caption('Performance = valeur actuelle du portefeuille − capital initial. Les cours sont les derniers disponibles via Yahoo Finance et peuvent être différés.')
+
+    st.markdown('### Acheter virtuellement')
+    with st.container(border=True):
+        sim_symbol, sim_label=choose_symbol('paper_buy','Apple · AAPL')
+        max_buy=max(10.0,float(account['cash_chf']))
+        default_buy=min(500.0,max_buy)
+        buy_amount=st.number_input('Montant à investir (CHF virtuels)',min_value=10.0,max_value=max_buy,value=default_buy,step=50.0)
+        if st.button('Acheter avec de l’argent fictif',type='primary',use_container_width=True):
+            try:
+                trade=place_paper_trade(user['id'],sim_symbol,sim_label,'buy',amount_chf=buy_amount)
+                st.success(f"Achat virtuel effectué : {trade['quantity']:.4f} unité(s) · {trade['total_chf']:.2f} CHF.")
+                st.rerun()
+            except Exception as e: st.error(str(e))
+    st.caption('Le prix utilisé est le dernier cours disponible au moment de l’opération. Ce n’est pas une exécution boursière réelle et il peut exister un délai de marché.')
+
+    st.markdown('### Mes positions')
+    positions=snap['positions']
+    if not positions:
+        st.info('Tu n’as encore aucun investissement virtuel.')
+    for pos in positions:
+        with st.container(border=True):
+            p1,p2=st.columns([3,1])
+            p1.write(f"**{pos['label']}** · `{pos['symbol']}`")
+            p1.caption(f"Quantité : {pos['quantity']:.4f} · prix moyen : {pos['avg_cost_chf']:.2f} CHF")
+            if pos['market_value_chf'] is not None:
+                p1.write(f"Valeur actuelle : **{pos['market_value_chf']:.2f} CHF** · gain/perte : **{pos['pnl_chf']:+.2f} CHF**")
+                sell_qty=p2.number_input('Qté à vendre',min_value=0.001,max_value=float(pos['quantity']),value=float(pos['quantity']),step=0.001,key=f"sell_qty_{pos['symbol']}")
+                if p2.button('Vendre',key=f"sell_{pos['symbol']}",use_container_width=True):
+                    try:
+                        place_paper_trade(user['id'],pos['symbol'],pos['label'],'sell',quantity=sell_qty); st.rerun()
+                    except Exception as e: st.error(str(e))
+            else:
+                p1.warning('Cours actuel indisponible pour cette position.')
+
+    with st.expander('Historique de mes opérations'):
+        trades=list_paper_trades(user['id'])
+        if trades:
+            rows=[]
+            for t in reversed(trades):
+                rows.append({'Date':str(t['created_at'])[:19].replace('T',' '),'Action':'Achat' if t['side']=='buy' else 'Vente','Actif':t['label'],'Quantité':round(float(t['quantity']),4),'Prix CHF':round(float(t['price_chf']),2),'Total CHF':round(float(t['total_chf']),2)})
+            st.dataframe(pd.DataFrame(rows),hide_index=True,use_container_width=True)
+        else: st.caption('Aucune opération.')
+    st.warning('Ce simulateur sert à apprendre et à mesurer le risque. Une performance passée ou virtuelle ne garantit jamais un gain futur avec de l’argent réel.')
+    st.stop()
 
 if page == 'Communauté':
     st.subheader('Marchés de la communauté')
@@ -262,6 +336,20 @@ if page == 'Compte & alertes':
         else:
             st.warning('Mode démo : les comptes sont locaux et peuvent disparaître lors d’un redéploiement. Configure Supabase avant de publier l’app à d’autres utilisateurs.')
 
+        st.markdown('### Niveau d’explication')
+        current_level = user.get('explanation_level') or 'standard'
+        level_label = st.radio('Choisis le vocabulaire utilisé dans AngelVision', ['Débutant','Standard'], horizontal=True, index=0 if current_level=='beginner' else 1)
+        new_level = 'beginner' if level_label=='Débutant' else 'standard'
+        if new_level != current_level:
+            update_explanation_level(user['id'],new_level)
+            st.session_state.user['explanation_level']=new_level
+            st.success('Niveau d’explication mis à jour.')
+            st.rerun()
+        if new_level=='beginner':
+            st.caption('AngelVision utilise des phrases simples et explique les termes financiers au fur et à mesure.')
+        else:
+            st.caption('AngelVision utilise le vocabulaire financier standard.')
+
         with st.expander('Supabase — configuration depuis iPhone'):
             st.markdown('''1. Ouvre **supabase.com** dans Safari et crée un projet.  
 2. Dans **SQL Editor**, colle le fichier `schema.sql` du dépôt puis appuie sur **Run**.  
@@ -321,7 +409,10 @@ tabs=st.tabs(['Marché','Risque','Scénarios','Comparer'])
 with tabs[0]:
     c1,c2=st.columns(2); c1.metric('Dernier cours',f'{last:,.2f}',f'{change:+.2f}% / séance'); c2.metric('RSI (14)',f"{m['rsi']:.1f}")
     label = 'Haussier' if m['trend_score']>=65 else 'Baissier' if m['trend_score']<=35 else 'Neutre'
-    st.markdown(f'<div class="av-score"><strong>Contexte de tendance : {label}</strong><br><span class="av-muted">Score {m["trend_score"]}/100 — position par rapport aux moyennes mobiles et au RSI, sans valeur prédictive garantie.</span></div>',unsafe_allow_html=True)
+    
+    beginner = bool(st.session_state.user and st.session_state.user.get('explanation_level')=='beginner')
+    trend_help = ('Ce score résume si le prix semble plutôt monter, baisser ou rester neutre récemment. Il ne prédit pas le futur.' if beginner else 'position par rapport aux moyennes mobiles et au RSI, sans valeur prédictive garantie.')
+    st.markdown(f'<div class="av-score"><strong>Contexte de tendance : {label}</strong><br><span class="av-muted">Score {m["trend_score"]}/100 — {trend_help}</span></div>',unsafe_allow_html=True)
     fig=go.Figure()
     fig.add_trace(go.Scatter(x=close.index,y=close.values,name='Cours',line=dict(width=2.6,color=RED)))
     fig.add_trace(go.Scatter(x=close.index,y=m['ma20'].values,name='MM 20',line=dict(width=1.5,color=RED_DARK)))
