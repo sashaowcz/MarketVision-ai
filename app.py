@@ -7,7 +7,8 @@ import streamlit as st
 from angelvision_core import (
     ASSETS, authenticate_user, create_alert, create_user, delete_alert,
     download_prices, indicators, list_alerts, production_storage_enabled,
-    search_assets, send_email, create_post, list_posts, toggle_like, delete_post,
+    search_assets, send_email, create_market_proposal, list_market_proposals,
+    toggle_market_like, delete_market_proposal, market_strip_snapshot,
 )
 
 RED = '#C62828'
@@ -48,6 +49,16 @@ button[data-baseweb="tab"][aria-selected="true"]{{color:var(--av-red)!important}
 .av-post-body{{font-size:.97rem;line-height:1.5;white-space:pre-wrap;word-break:break-word}}
 .av-share{{margin-top:.7rem;border-left:4px solid var(--av-red);background:#fff7f7;border-radius:12px;padding:10px 12px}}
 .av-share-title{{font-weight:700}} .av-share-meta{{color:#6d5d5d;font-size:.82rem;margin-top:.15rem}}
+.av-ticker-wrap{{overflow:hidden;border-bottom:1px solid #f0e6e6;background:#fff;padding:.38rem 0;margin:-.2rem 0 .55rem}}
+.av-ticker-track{{display:flex;width:max-content;gap:1.4rem;animation:avTicker 34s linear infinite;will-change:transform}}
+.av-ticker-item{{white-space:nowrap;font-size:.78rem;font-weight:650;color:#3c3434}}
+.av-ticker-pos{{color:#147a54}}.av-ticker-neg{{color:var(--av-red)}}
+@keyframes avTicker{{from{{transform:translateX(0)}}to{{transform:translateX(-50%)}}}}
+.av-market-card{{border:1px solid #eadede;border-radius:18px;padding:14px 15px;background:#fff;margin:.55rem 0;box-shadow:0 3px 14px rgba(60,20,20,.025)}}
+.av-market-head{{display:flex;justify-content:space-between;gap:.75rem;align-items:flex-start}}
+.av-market-title{{font-weight:760;font-size:1rem}}.av-market-meta{{font-size:.8rem;color:#7b6d6d;margin-top:.18rem}}
+.av-period-pill{{display:inline-block;border:1px solid #efd6d6;background:#fff7f7;color:#8a2323;border-radius:999px;padding:.22rem .55rem;font-size:.76rem;font-weight:700}}
+.av-perf{{font-size:1.35rem;font-weight:780;letter-spacing:-.03em;margin-top:.45rem}}
 [data-testid="stAlert"]{{border-radius:14px!important}}
 hr{{border-color:#f0e6e6!important}}
 @media(max-width:650px){{.block-container{{padding:.65rem .65rem 5.4rem}}.av-logo{{width:38px;height:38px;border-radius:12px}}.av-name{{font-size:1.65rem}}h1{{font-size:1.7rem!important}}h2{{font-size:1.3rem!important}}h3{{font-size:1.08rem!important}}[data-testid="stHorizontalBlock"]{{gap:.42rem}}[data-testid="stMetric"]{{padding:11px}}[data-testid="stMetricValue"]{{font-size:1.35rem}}div[data-testid="stPlotlyChart"]{{max-width:100%;overflow:hidden}}.av-sub{{font-size:.9rem}}}}
@@ -61,12 +72,29 @@ def prices(symbol, period):
 def asset_search(query):
     return search_assets(query, 12)
 
+@st.cache_data(ttl=300, show_spinner=False)
+def ticker_strip():
+    return market_strip_snapshot()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def proposal_performance(symbol, period):
+    sessions = {'1d': 1, '1w': 5, '1mo': 21, '6mo': 126, '1y': 252}
+    fetch = {'1d': '5d', '1w': '1mo', '1mo': '3mo', '6mo': '1y', '1y': '2y'}
+    d = prices(symbol, fetch[period])
+    if len(d) < 2:
+        return None, None
+    close = d['Close'].astype(float)
+    n = sessions[period]
+    ref = float(close.iloc[max(0, len(close)-1-n)])
+    last = float(close.iloc[-1])
+    return last, (last/ref-1)*100 if ref else None
+
 def plot_style(fig, height=340, rangeslider=False):
     fig.update_layout(
         template='plotly_white', height=height, margin=dict(l=8,r=8,t=18,b=34),
         legend=dict(orientation='h',y=-.23,x=0,font=dict(size=10)), hovermode='x unified',
         dragmode='pan', font=dict(size=11,family='Helvetica Neue, Arial',color=INK),
-        xaxis=dict(automargin=True,gridcolor=GRID,showgrid=False,rangeslider=dict(visible=rangeslider,thickness=.08)),
+        xaxis=dict(automargin=True,gridcolor=GRID,showgrid=False,rangeslider=dict(visible=rangeslider,thickness=.055)),
         yaxis=dict(automargin=True,gridcolor=GRID), paper_bgcolor='#FFFFFF', plot_bgcolor='#FFFFFF',
         modebar=dict(bgcolor='rgba(255,255,255,.90)',color='#6a5b5b',activecolor=RED),
     )
@@ -100,92 +128,72 @@ def choose_symbol(prefix, default_label='MSCI World · URTH'):
 
 if 'user' not in st.session_state: st.session_state.user = None
 
-st.markdown('''<div class="av-hero"><div class="av-kicker">Marchés • Risque • Communauté • Alertes</div><div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div><div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div></div>''', unsafe_allow_html=True)
+strip = ticker_strip()
+if strip:
+    parts=[]
+    for item in strip:
+        cls='av-ticker-pos' if item['change'] >= 0 else 'av-ticker-neg'
+        arrow='▲' if item['change'] >= 0 else '▼'
+        parts.append(f'<span class="av-ticker-item"><b>{html.escape(item["label"])}</b> {item["price"]:,.2f} <span class="{cls}">{arrow} {item["change"]:+.2f}%</span></span>')
+    content=''.join(parts)
+    st.markdown(f'<div class="av-ticker-wrap"><div class="av-ticker-track">{content}{content}</div></div>', unsafe_allow_html=True)
+
+st.markdown('''<div class="av-hero"><div class="av-kicker">Marchés • Risque • Tendances • Alertes</div><div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div><div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div></div>''', unsafe_allow_html=True)
 page = st.radio('Navigation', ['Marchés','Communauté','Compte & alertes'], horizontal=True, label_visibility='collapsed')
 
 if page == 'Communauté':
-    st.subheader('Communauté AngelVision')
-    st.caption('Un fil texte uniquement. Pas d’images ni de fichiers : tu peux écrire librement et joindre seulement des données générées dans AngelVision.')
+    st.subheader('Marchés de la communauté')
+    st.caption('Ici, pas de posts texte : la communauté propose uniquement des marchés à regarder sur une période précise. Tu peux liker si tu as un compte.')
 
+    period_labels = {'1d':'1 jour','1w':'1 semaine','1mo':'1 mois','6mo':'6 mois','1y':'1 an'}
     if st.session_state.user:
         with st.container(border=True):
-            st.markdown('### Publier')
-            body = st.text_area('Ton message', max_chars=500, placeholder='Partage une idée, une question ou ton analyse…', key='community_body')
-            attach_mode = st.radio('Ajouter', ['Texte uniquement','Un actif AngelVision'], horizontal=True, key='community_attach')
-            shared = None
-            if attach_mode == 'Un actif AngelVision':
-                share_symbol, share_label = choose_symbol('community_share', 'MSCI World · URTH')
-                if share_symbol:
-                    try:
-                        share_df = prices(share_symbol, '6mo')
-                        if len(share_df) >= 65:
-                            share_m = indicators(share_df)
-                            share_price = float(share_m['close'].iloc[-1])
-                            shared = {'symbol': share_symbol, 'label': share_label, 'price': share_price,
-                                      'trend_score': share_m['trend_score'], 'risk_score': share_m['risk_score']}
-                            st.markdown(f'<div class="av-share"><div class="av-share-title">{html.escape(str(share_label))} · {html.escape(str(share_symbol))}</div><div class="av-share-meta">Cours {share_price:,.2f} · Tendance {share_m["trend_score"]}/100 · Risque {share_m["risk_score"]}/100</div></div>', unsafe_allow_html=True)
-                        else:
-                            st.warning('Pas assez de données pour créer la fiche de cet actif.')
-                    except Exception:
-                        st.warning('Impossible de charger cet actif pour le moment.')
-            if st.button('Publier', type='primary', use_container_width=True, key='publish_post'):
+            st.markdown('### Proposer un marché')
+            prop_symbol, prop_label = choose_symbol('proposal', 'MSCI World · URTH')
+            prop_period = st.radio('Période', ['1d','1w','1mo','6mo','1y'], horizontal=True, format_func=lambda x: period_labels[x], key='proposal_period')
+            destination = st.radio('Partager', ['Au public','À un ami'], horizontal=True, key='proposal_scope')
+            friend_name = ''
+            if destination == 'À un ami':
+                friend_name = st.text_input('Pseudonyme de l’ami', placeholder='Ex. Sasha', key='proposal_friend')
+            if st.button('Proposer ce marché', type='primary', use_container_width=True, key='proposal_submit'):
                 try:
-                    create_post(st.session_state.user['id'], body, shared=shared)
-                    st.session_state.community_body = ''
-                    st.success('Publication envoyée.')
+                    create_market_proposal(st.session_state.user['id'], prop_symbol, prop_label, prop_period, 'public' if destination=='Au public' else 'friend', friend_name)
+                    st.success('Marché proposé.')
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
     else:
-        st.info('Connecte-toi dans « Compte & alertes » pour publier, répondre ou aimer. Le fil reste lisible sans compte.')
+        st.markdown('<div class="av-status"><b>Connecte-toi pour liker ou proposer un marché.</b><br><span class="av-muted">Le fil public reste visible sans compte.</span></div>', unsafe_allow_html=True)
 
-    posts = list_posts(120)
-    top = [p for p in posts if not p.get('parent_id')]
-    replies_by_parent = {}
-    for p0 in posts:
-        if p0.get('parent_id'):
-            replies_by_parent.setdefault(p0['parent_id'], []).append(p0)
-
-    if not top:
-        st.info('Aucune publication pour le moment. Sois le premier à lancer une discussion.')
-    for post in top:
-        name = html.escape(str(post.get('display_name') or 'Utilisateur'))
-        body_safe = html.escape(str(post.get('body') or ''))
-        when = html.escape(str(post.get('created_at') or '').replace('T',' ')[:16])
-        st.markdown(f'<div class="av-post"><div class="av-post-head"><span class="av-post-user">@{name}</span><span class="av-post-time">{when}</span></div><div class="av-post-body">{body_safe}</div>', unsafe_allow_html=True)
-        if post.get('shared_symbol'):
-            lbl = html.escape(str(post.get('shared_label') or post.get('shared_symbol')))
-            sym = html.escape(str(post.get('shared_symbol')))
-            price = post.get('shared_price'); trend = post.get('shared_trend'); risk = post.get('shared_risk')
-            meta=[]
-            if price is not None: meta.append(f'Cours {float(price):,.2f}')
-            if trend is not None: meta.append(f'Tendance {int(trend)}/100')
-            if risk is not None: meta.append(f'Risque {int(risk)}/100')
-            st.markdown(f'<div class="av-share"><div class="av-share-title">{lbl} · {sym}</div><div class="av-share-meta">{" · ".join(meta)}</div></div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
+    viewer_id = st.session_state.user['id'] if st.session_state.user else None
+    proposals = list_market_proposals(viewer_id, 120)
+    if not proposals:
+        st.info('Aucun marché proposé pour le moment.')
+    for prop in proposals:
+        try:
+            last_prop, perf = proposal_performance(prop['symbol'], prop['period'])
+        except Exception:
+            last_prop, perf = None, None
+        scope_text = 'Public' if prop.get('scope') == 'public' else 'Partagé en privé'
+        who = html.escape(str(prop.get('display_name') or 'Utilisateur'))
+        label_safe = html.escape(str(prop.get('label') or prop.get('symbol')))
+        sym_safe = html.escape(str(prop.get('symbol') or ''))
+        perf_html = 'Données indisponibles' if perf is None else f'{perf:+.2f}% sur {period_labels[prop["period"]]}'
+        perf_class = 'av-ticker-pos' if (perf or 0) >= 0 else 'av-ticker-neg'
+        st.markdown(f'''<div class="av-market-card"><div class="av-market-head"><div><div class="av-market-title">{label_safe}</div><div class="av-market-meta">{sym_safe} · proposé par @{who} · {scope_text}</div></div><span class="av-period-pill">{period_labels[prop['period']]}</span></div><div class="av-perf {perf_class}">{perf_html}</div></div>''', unsafe_allow_html=True)
+        likes = int(prop.get('like_count') or 0)
         user = st.session_state.user
-        likes = int(post.get('like_count') or 0)
         if user:
-            liked = user['id'] in (post.get('like_user_ids') or [])
-            c1,c2,c3 = st.columns([1.25,1.35,3])
-            if c1.button(('♥' if liked else '♡') + f' {likes}', key=f'like_{post["id"]}', use_container_width=True):
-                toggle_like(user['id'], post['id']); st.rerun()
-            with c2.popover('Répondre', use_container_width=True):
-                with st.form(f'reply_form_{post["id"]}'):
-                    reply = st.text_area('Réponse', max_chars=500, key=f'reply_{post["id"]}', label_visibility='collapsed', placeholder='Écrire une réponse…')
-                    if st.form_submit_button('Envoyer', use_container_width=True):
-                        create_post(user['id'], reply, parent_id=post['id']); st.rerun()
-            if post.get('user_id') == user['id'] and c3.button('Supprimer', key=f'delpost_{post["id"]}'):
-                delete_post(user['id'], post['id']); st.rerun()
+            liked = user['id'] in (prop.get('like_user_ids') or [])
+            c1,c2 = st.columns([1.2,3])
+            if c1.button(('♥' if liked else '♡') + f' {likes}', key=f'market_like_{prop["id"]}', use_container_width=True):
+                toggle_market_like(user['id'], prop['id'])
+                st.rerun()
+            if prop.get('user_id') == user['id'] and c2.button('Retirer ma proposition', key=f'market_del_{prop["id"]}'):
+                delete_market_proposal(user['id'], prop['id'])
+                st.rerun()
         else:
-            st.caption(f'♡ {likes}')
-
-        replies = list(reversed(replies_by_parent.get(post['id'], [])))
-        for rep in replies:
-            rname = html.escape(str(rep.get('display_name') or 'Utilisateur'))
-            rbody = html.escape(str(rep.get('body') or ''))
-            st.markdown(f'<div style="margin-left:1rem;border-left:2px solid #f0dede;padding:.35rem 0 .35rem .8rem"><b>@{rname}</b><br><span style="white-space:pre-wrap">{rbody}</span></div>', unsafe_allow_html=True)
+            st.caption(f'♡ {likes} likes')
         st.divider()
     st.stop()
 
@@ -291,7 +299,7 @@ with tabs[0]:
     st.plotly_chart(plot_style(fig,rangeslider=True),use_container_width=True,config=PLOT_CONFIG)
     st.caption('Interaction : glisse avec un doigt pour déplacer le graphique, pince pour zoomer/dézoomer, double-tape pour réinitialiser. Les boutons − / maison de Plotly permettent aussi de dézoomer ou de revenir à la vue initiale.')
     trend='au-dessus' if last>float(m['ma50'].iloc[-1]) else 'en dessous'; zone='élevé' if m['rsi']>=70 else 'faible' if m['rsi']<=30 else 'intermédiaire'
-    st.info(f'Le cours est {trend} de sa moyenne 50 séances. RSI {zone}. À utiliser comme contexte, pas comme ordre d’achat ou de vente.')
+    st.markdown(f'<div class="av-status">Le cours est <b>{trend}</b> de sa moyenne 50 séances. RSI {zone}. À utiliser comme contexte, pas comme ordre d’achat ou de vente.</div>', unsafe_allow_html=True)
 with tabs[1]:
     c1,c2=st.columns(2); c1.metric('Volatilité annualisée',f"{m['vol']:.1%}"); c2.metric('Pire repli historique',f"{m['dd']:.1%}")
     c3,c4=st.columns(2); c3.metric('VaR 95 % (1 séance)',f"{m['var']:.2%}"); c4.metric('CVaR 95 %',f"{m['cvar']:.2%}")

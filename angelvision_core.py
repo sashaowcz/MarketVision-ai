@@ -99,6 +99,24 @@ def init_local_db() -> None:
         FOREIGN KEY(post_id) REFERENCES posts(id),
         FOREIGN KEY(user_id) REFERENCES users(id)
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS market_proposals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        label TEXT NOT NULL,
+        period TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'public',
+        target_user_id INTEGER,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(target_user_id) REFERENCES users(id)
+    )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS market_likes (
+        proposal_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY(proposal_id,user_id),
+        FOREIGN KEY(proposal_id) REFERENCES market_proposals(id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )""")
     con.commit(); con.close()
 
 
@@ -337,3 +355,139 @@ def delete_post(user_id: int, post_id: int) -> None:
         _sb('posts','DELETE',params={'id':f'eq.{post_id}','user_id':f'eq.{user_id}'},prefer='return=minimal'); return
     init_local_db(); con = sqlite3.connect(DB_PATH)
     con.execute('DELETE FROM post_likes WHERE post_id=?',(post_id,)); con.execute('DELETE FROM posts WHERE parent_id=?',(post_id,)); con.execute('DELETE FROM posts WHERE id=? AND user_id=?',(post_id,user_id)); con.commit(); con.close()
+
+
+def _find_user_by_display_name(display_name: str) -> dict | None:
+    name = (display_name or '').strip()
+    if not name:
+        return None
+    if production_storage_enabled():
+        rows = _sb('users', params={'display_name': f'eq.{name}', 'select': 'id,display_name,email', 'limit': '1'}) or []
+        return rows[0] if rows else None
+    init_local_db()
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    row = con.execute('SELECT id,display_name,email FROM users WHERE lower(display_name)=lower(?) LIMIT 1', (name,)).fetchone()
+    con.close()
+    return dict(row) if row else None
+
+def create_market_proposal(user_id: int, symbol: str, label: str, period: str, scope: str = 'public', target_display_name: str | None = None) -> dict:
+    symbol = (symbol or '').strip().upper()[:32]
+    label = (label or symbol).strip()[:120]
+    if period not in {'1d','1w','1mo','6mo','1y'}:
+        raise ValueError('Période invalide.')
+    if scope not in {'public','friend'}:
+        raise ValueError('Destination invalide.')
+    target_user_id = None
+    if scope == 'friend':
+        friend = _find_user_by_display_name(target_display_name or '')
+        if not friend:
+            raise ValueError('Aucun compte trouvé avec ce pseudonyme.')
+        if int(friend['id']) == int(user_id):
+            raise ValueError('Choisis un autre utilisateur.')
+        target_user_id = int(friend['id'])
+    row = {'user_id': user_id, 'symbol': symbol, 'label': label, 'period': period, 'scope': scope, 'target_user_id': target_user_id, 'created_at': utcnow_iso()}
+    if production_storage_enabled():
+        rows = _sb('market_proposals', 'POST', payload=row, prefer='return=representation') or []
+        return rows[0] if rows else row
+    init_local_db()
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    cur = con.execute('INSERT INTO market_proposals(user_id,symbol,label,period,scope,target_user_id,created_at) VALUES(?,?,?,?,?,?,?)', (user_id,symbol,label,period,scope,target_user_id,row['created_at']))
+    con.commit()
+    out = dict(con.execute('SELECT * FROM market_proposals WHERE id=?', (cur.lastrowid,)).fetchone())
+    con.close()
+    return out
+
+def list_market_proposals(viewer_user_id: int | None = None, limit: int = 100) -> list[dict]:
+    limit = max(1, min(int(limit), 200))
+    if production_storage_enabled():
+        if viewer_user_id:
+            params = {
+                'or': f'(scope.eq.public,target_user_id.eq.{viewer_user_id},user_id.eq.{viewer_user_id})',
+                'select': '*,users!market_proposals_user_id_fkey(display_name),market_likes(user_id)',
+                'order': 'created_at.desc', 'limit': str(limit)
+            }
+        else:
+            params = {
+                'scope': 'eq.public',
+                'select': '*,users!market_proposals_user_id_fkey(display_name),market_likes(user_id)',
+                'order': 'created_at.desc', 'limit': str(limit)
+            }
+        rows = _sb('market_proposals', params=params) or []
+        out = []
+        for r in rows:
+            users = r.get('users') or {}
+            likes = r.get('market_likes') or []
+            r['display_name'] = users.get('display_name') or 'Utilisateur'
+            r['like_user_ids'] = [x.get('user_id') for x in likes if x.get('user_id') is not None]
+            r['like_count'] = len(r['like_user_ids'])
+            r.pop('users', None)
+            r.pop('market_likes', None)
+            out.append(r)
+        return out
+    init_local_db()
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    if viewer_user_id:
+        rows = con.execute("""SELECT p.*,u.display_name,(SELECT COUNT(*) FROM market_likes l WHERE l.proposal_id=p.id) like_count
+                              FROM market_proposals p JOIN users u ON u.id=p.user_id
+                              WHERE p.scope='public' OR p.target_user_id=? OR p.user_id=?
+                              ORDER BY p.created_at DESC LIMIT ?""", (viewer_user_id, viewer_user_id, limit)).fetchall()
+    else:
+        rows = con.execute("""SELECT p.*,u.display_name,(SELECT COUNT(*) FROM market_likes l WHERE l.proposal_id=p.id) like_count
+                              FROM market_proposals p JOIN users u ON u.id=p.user_id
+                              WHERE p.scope='public' ORDER BY p.created_at DESC LIMIT ?""", (limit,)).fetchall()
+    out = []
+    for row in rows:
+        d = dict(row)
+        d['like_user_ids'] = [x[0] for x in con.execute('SELECT user_id FROM market_likes WHERE proposal_id=?', (d['id'],)).fetchall()]
+        out.append(d)
+    con.close()
+    return out
+
+def toggle_market_like(user_id: int, proposal_id: int) -> bool:
+    if production_storage_enabled():
+        existing = _sb('market_likes', params={'proposal_id': f'eq.{proposal_id}', 'user_id': f'eq.{user_id}', 'select': 'proposal_id'}) or []
+        if existing:
+            _sb('market_likes', 'DELETE', params={'proposal_id': f'eq.{proposal_id}', 'user_id': f'eq.{user_id}'}, prefer='return=minimal')
+            return False
+        _sb('market_likes', 'POST', payload={'proposal_id': proposal_id, 'user_id': user_id, 'created_at': utcnow_iso()}, prefer='return=minimal')
+        return True
+    init_local_db()
+    con = sqlite3.connect(DB_PATH)
+    exists = con.execute('SELECT 1 FROM market_likes WHERE proposal_id=? AND user_id=?', (proposal_id,user_id)).fetchone()
+    if exists:
+        con.execute('DELETE FROM market_likes WHERE proposal_id=? AND user_id=?', (proposal_id,user_id))
+        liked = False
+    else:
+        con.execute('INSERT INTO market_likes(proposal_id,user_id,created_at) VALUES(?,?,?)', (proposal_id,user_id,utcnow_iso()))
+        liked = True
+    con.commit()
+    con.close()
+    return liked
+
+def delete_market_proposal(user_id: int, proposal_id: int) -> None:
+    if production_storage_enabled():
+        _sb('market_proposals', 'DELETE', params={'id': f'eq.{proposal_id}', 'user_id': f'eq.{user_id}'}, prefer='return=minimal')
+        return
+    init_local_db()
+    con = sqlite3.connect(DB_PATH)
+    con.execute('DELETE FROM market_likes WHERE proposal_id=?', (proposal_id,))
+    con.execute('DELETE FROM market_proposals WHERE id=? AND user_id=?', (proposal_id,user_id))
+    con.commit()
+    con.close()
+
+def market_strip_snapshot() -> list[dict]:
+    items = [('S&P 500','^GSPC'), ('Nasdaq','^IXIC'), ('Dow','^DJI'), ('SMI','^SSMI'), ('Euro Stoxx 50','^STOXX50E'), ('Bitcoin','BTC-USD'), ('Or','GC=F'), ('WTI','CL=F')]
+    out = []
+    for label, symbol in items:
+        try:
+            d = download_prices(symbol, '5d')
+            if len(d) >= 2:
+                last = float(d['Close'].iloc[-1])
+                prev = float(d['Close'].iloc[-2])
+                out.append({'label': label, 'symbol': symbol, 'price': last, 'change': (last/prev-1)*100})
+        except Exception:
+            continue
+    return out
