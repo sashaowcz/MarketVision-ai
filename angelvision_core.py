@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import hmac
-import json
 import os
 import secrets
 import sqlite3
@@ -24,9 +23,15 @@ ASSETS = {
     'Nestlé · NESN.SW': 'NESN.SW',
     'Apple · AAPL': 'AAPL',
     'Microsoft · MSFT': 'MSFT',
+    'Nvidia · NVDA': 'NVDA',
+    'Tesla · TSLA': 'TSLA',
     'Bitcoin · BTC-USD': 'BTC-USD',
     'Ethereum · ETH-USD': 'ETH-USD',
-    'Or · GLD': 'GLD',
+    'Or · GC=F': 'GC=F',
+    'Or ETF · GLD': 'GLD',
+    'Pétrole WTI · CL=F': 'CL=F',
+    'EUR/CHF · EURCHF=X': 'EURCHF=X',
+    'USD/CHF · CHF=X': 'CHF=X',
     'Obligations US · AGG': 'AGG',
 }
 
@@ -59,8 +64,12 @@ def init_local_db() -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
+        display_name TEXT,
         created_at TEXT NOT NULL
     )''')
+    cols = {row[1] for row in con.execute('PRAGMA table_info(users)').fetchall()}
+    if 'display_name' not in cols:
+        con.execute('ALTER TABLE users ADD COLUMN display_name TEXT')
     con.execute('''CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -78,6 +87,7 @@ def init_local_db() -> None:
 
 def _supabase_cfg() -> tuple[str | None, str | None]:
     url = os.getenv('SUPABASE_URL')
+    # New Supabase server-side key first; legacy service-role remains supported as fallback.
     key = os.getenv('SUPABASE_SECRET_KEY') or os.getenv('SUPABASE_SERVICE_ROLE_KEY')
     return url, key
 
@@ -107,18 +117,21 @@ def _sb(table: str, method: str = 'GET', params: dict | None = None, payload: An
     return r.json()
 
 
-def create_user(email: str, password: str) -> dict:
+def create_user(email: str, password: str, display_name: str) -> dict:
     email = email.strip().lower()
+    display_name = (display_name or '').strip()[:40]
+    if not display_name:
+        raise ValueError('Choisis un pseudonyme.')
     if production_storage_enabled():
         existing = _sb('users', params={'email': f'eq.{email}', 'select': 'id'})
         if existing:
             raise ValueError('Un compte existe déjà avec cet email.')
-        rows = _sb('users', 'POST', payload={'email': email, 'password_hash': hash_password(password), 'created_at': utcnow_iso()}, prefer='return=representation')
+        rows = _sb('users', 'POST', payload={'email': email, 'password_hash': hash_password(password), 'display_name': display_name, 'created_at': utcnow_iso()}, prefer='return=representation')
         return rows[0]
     init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
     try:
-        cur = con.execute('INSERT INTO users(email,password_hash,created_at) VALUES(?,?,?)', (email, hash_password(password), utcnow_iso()))
-        con.commit(); row = con.execute('SELECT id,email,created_at FROM users WHERE id=?', (cur.lastrowid,)).fetchone(); return dict(row)
+        cur = con.execute('INSERT INTO users(email,password_hash,display_name,created_at) VALUES(?,?,?,?)', (email, hash_password(password), display_name, utcnow_iso()))
+        con.commit(); row = con.execute('SELECT id,email,display_name,created_at FROM users WHERE id=?', (cur.lastrowid,)).fetchone(); return dict(row)
     except sqlite3.IntegrityError:
         raise ValueError('Un compte existe déjà avec cet email.')
     finally:
@@ -128,15 +141,41 @@ def create_user(email: str, password: str) -> dict:
 def authenticate_user(email: str, password: str) -> dict | None:
     email = email.strip().lower()
     if production_storage_enabled():
-        rows = _sb('users', params={'email': f'eq.{email}', 'select': 'id,email,password_hash,created_at'})
+        rows = _sb('users', params={'email': f'eq.{email}', 'select': 'id,email,password_hash,display_name,created_at'})
         if not rows or not verify_password(password, rows[0]['password_hash']):
             return None
-        return {k: rows[0][k] for k in ('id','email','created_at')}
+        return {k: rows[0].get(k) for k in ('id','email','display_name','created_at')}
     init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
     row = con.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone(); con.close()
     if row and verify_password(password, row['password_hash']):
-        return {'id': row['id'], 'email': row['email'], 'created_at': row['created_at']}
+        return {'id': row['id'], 'email': row['email'], 'display_name': row['display_name'], 'created_at': row['created_at']}
     return None
+
+
+def search_assets(query: str, max_results: int = 10) -> list[dict]:
+    query = (query or '').strip()
+    if len(query) < 2:
+        return []
+    try:
+        quotes = yf.Search(query, max_results=max_results, news_count=0, lists_count=0, include_research=False, enable_fuzzy_query=True, raise_errors=False).quotes or []
+    except Exception:
+        quotes = []
+    out = []
+    seen = set()
+    for q in quotes:
+        symbol = str(q.get('symbol') or '').strip()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        name = q.get('shortname') or q.get('longname') or q.get('name') or symbol
+        exch = q.get('exchange') or q.get('exchDisp') or ''
+        qtype = q.get('quoteType') or q.get('typeDisp') or ''
+        label = f"{name} · {symbol}"
+        if exch: label += f" · {exch}"
+        out.append({'symbol': symbol, 'name': name, 'label': label, 'type': qtype})
+        if len(out) >= max_results:
+            break
+    return out
 
 
 def list_alerts(user_id: int) -> list[dict]:
@@ -164,7 +203,7 @@ def delete_alert(user_id: int, alert_id: int) -> None:
 def all_enabled_alerts() -> list[dict]:
     if not production_storage_enabled():
         return []
-    return _sb('alerts', params={'enabled': 'eq.true', 'select': '*,users(email)'}) or []
+    return _sb('alerts', params={'enabled': 'eq.true', 'select': '*,users(email,display_name)'}) or []
 
 
 def mark_alert_sent(alert_id: int) -> None:

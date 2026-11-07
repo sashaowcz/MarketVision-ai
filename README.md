@@ -1,78 +1,63 @@
-# 🪽 AngelVision AI 2.1
+# AngelVision AI 2.2
 
-Application Streamlit mobile-first pour iPhone, Android et ordinateur. Elle affiche des cours, indicateurs de tendance, mesures de risque, scénarios Monte-Carlo, comparaison d'actifs, comptes et alertes email.
+Version mobile-first pour iPhone, Android et ordinateur.
 
-> Les alertes sont des **conditions à examiner**, pas des recommandations d'achat. Les données Yahoo Finance peuvent être différées.
+## Nouveautés 2.2
 
-## Mise à jour rapide de ton site actuel
+- Identité visuelle **blanc + rouge AngelVision**.
+- Logo typographique rouge intégré à l'interface.
+- Graphiques mobiles plus naturels : **glisser = déplacer**, pincement = zoom, double-tap = reset, boutons de dézoom/reset et curseur temporel.
+- Pseudonyme lors de la création du compte.
+- Recherche Yahoo Finance pour retrouver des actions, ETF, indices, cryptomonnaies, devises et matières premières non présentes dans la sélection rapide.
+- Alertes disponibles sur les actifs recherchés.
+- Configuration Supabase actualisée pour les nouvelles **Secret keys** côté serveur.
+- Workflow GitHub Actions fourni pour vérifier les alertes environ chaque heure.
 
-Remplace dans ton dépôt GitHub les fichiers `app.py`, `requirements.txt` et `README.md`, puis ajoute aussi `angelvision_core.py`, `alert_worker.py`, `schema.sql` et le dossier `.github/workflows/`.
+## Mise à jour depuis l'iPhone
 
-Streamlit redéploiera l'application automatiquement.
+1. Décompresse le ZIP dans l'app **Fichiers**.
+2. Dans ton dépôt GitHub, remplace `app.py`, `angelvision_core.py`, `alert_worker.py`, `requirements.txt`, `schema.sql` et `README.md`.
+3. Ajoute aussi le fichier caché `.github/workflows/alerts.yml`. Sur iPhone, GitHub peut masquer les dossiers commençant par un point : utilise Safari en **Version pour ordinateur** si nécessaire.
+4. Streamlit redéploiera automatiquement l'app.
 
-## Comptes : mode démo et mode production
+## Activer Supabase depuis l'iPhone
 
-Sans configuration supplémentaire, la page Compte fonctionne avec une petite base SQLite locale. C'est pratique pour tester, mais Streamlit Cloud peut effacer ce fichier lors d'un redémarrage ou redéploiement.
-
-Pour de vrais comptes persistants, utilise Supabase.
-
-### 1. Supabase
-
-1. Crée un projet sur Supabase.
-2. Ouvre l'éditeur SQL et exécute tout le contenu de `schema.sql`.
-3. Dans le tableau de bord Supabase, récupère le **Project URL** et une **Secret key** côté serveur.
-4. Dans Streamlit Cloud > ton app > Settings > Secrets, ajoute :
+1. Dans Safari, ouvre `supabase.com` et crée un nouveau projet.
+2. Ouvre **SQL Editor** → **New query**.
+3. Copie tout le contenu de `schema.sql`, colle-le et appuie sur **Run**.
+4. Ouvre **Connect** ou **Settings → API Keys**.
+5. Copie le **Project URL**.
+6. Crée/copie une **Secret key** commençant par `sb_secret_` (côté serveur uniquement).
+7. Dans Streamlit : **Manage app → Settings → Secrets**, ajoute :
 
 ```toml
-SUPABASE_URL="https://TON-PROJET.supabase.co"
-SUPABASE_SECRET_KEY="sb_secret_..."
+SUPABASE_URL = "https://TON-PROJET.supabase.co"
+SUPABASE_SECRET_KEY = "sb_secret_..."
 ```
 
-Ne mets jamais la secret key directement dans GitHub.
+8. Sauvegarde puis redémarre l'app. Dans **Compte & alertes**, AngelVision doit afficher que Supabase est activé.
+
+> Ne mets jamais `SUPABASE_SECRET_KEY` dans un fichier GitHub public.
 
 ## Emails avec Resend
 
-1. Crée un compte Resend.
-2. Crée une API key.
-3. Vérifie un domaine d'envoi ou utilise une adresse d'envoi autorisée par Resend.
-4. Ajoute dans les Secrets Streamlit :
+Ajoute également dans Streamlit Secrets :
 
 ```toml
-RESEND_API_KEY="re_..."
-RESEND_FROM="AngelVision <alerts@ton-domaine.ch>"
+RESEND_API_KEY = "re_..."
+RESEND_FROM = "AngelVision <alerts@ton-domaine.com>"
 ```
 
-Une fois configuré, l'app peut envoyer l'email de bienvenue.
+Pour GitHub Actions, ajoute les mêmes quatre valeurs dans : **Repository → Settings → Secrets and variables → Actions**.
 
-## Alertes automatiques même quand l'app est fermée
+## Graphiques tactiles
 
-Le fichier `.github/workflows/alerts.yml` lance `alert_worker.py` environ une fois par heure avec GitHub Actions.
+- 1 doigt : déplacement horizontal/vertical du graphique.
+- Pincement : zoom avant/arrière.
+- Double-tap : réinitialisation de la vue.
+- Barre d'outils : zoom +, zoom −, autoscale, reset.
+- Mini curseur sous les graphiques principaux pour choisir rapidement une période.
 
-Dans GitHub : Repository > Settings > Secrets and variables > Actions > New repository secret. Ajoute :
+## Important
 
-- `SUPABASE_URL`
-- `SUPABASE_SECRET_KEY`
-- `RESEND_API_KEY`
-- `RESEND_FROM`
-
-Tu peux ensuite ouvrir l'onglet **Actions** du dépôt et lancer manuellement `AngelVision email alerts` pour tester.
-
-## Règles d'alerte incluses
-
-- prix sous un seuil ;
-- prix au-dessus d'un seuil ;
-- RSI faible ;
-- retour du cours au-dessus de la moyenne mobile 50 jours.
-
-Un délai d'environ 20 heures évite de répéter le même email trop souvent.
-
-## Installation locale
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Sécurité
-
-Les mots de passe sont hachés avec PBKDF2-HMAC-SHA256. Pour une application publique à grande échelle, il est préférable d'utiliser un système d'authentification géré (par exemple Supabase Auth) plutôt que ce mécanisme simplifié.
+Les données Yahoo Finance peuvent être différées. Les scores, simulations et alertes ne sont pas des conseils personnalisés et ne prédisent pas les marchés avec certitude.
