@@ -147,28 +147,29 @@ if strip:
     content=''.join(parts)
     st.markdown(f'<div class="av-ticker-wrap"><div class="av-ticker-track">{content}{content}</div></div>', unsafe_allow_html=True)
 
-# En-tête mobile : logo à gauche, compte compact à droite, sous la banderole.
+# En-tête mobile : navigation interne sans rechargement de page.
+# Important sur iPhone : les liens HTML avec ?view=... pouvaient recréer la session
+# Streamlit et donner l'impression que l'utilisateur était déconnecté.
 if 'active_page' not in st.session_state:
     st.session_state.active_page = 'Marchés'
 
-view_param = st.query_params.get('view', '')
-if view_param == 'account':
-    st.session_state.active_page = 'Compte & alertes'
-elif view_param == 'markets' and st.session_state.active_page == 'Compte & alertes':
-    st.session_state.active_page = 'Marchés'
-
 account_text = (st.session_state.user.get('display_name') or 'Compte') if st.session_state.user else 'Compte'
-st.markdown(f'''<div class="av-toprow">
-  <div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div>
-  <a class="av-account-link" href="?view=account">{html.escape(account_text)}</a>
-</div>
-<div class="av-head-kicker">Marchés • Risque • Tendances • Alertes</div>''', unsafe_allow_html=True)
+header_left, header_right = st.columns([3.2, 1.15], vertical_alignment='center')
+with header_left:
+    st.markdown('''<div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div>''', unsafe_allow_html=True)
+with header_right:
+    if st.button(account_text, key='open_account', use_container_width=True):
+        st.session_state.active_page = 'Compte & alertes'
+        st.rerun()
+st.markdown('<div class="av-head-kicker">Marchés • Risque • Tendances • Alertes</div>', unsafe_allow_html=True)
 
 st.markdown('<div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div><div style="height:.35rem;border-bottom:1px solid #f0e6e6;margin-bottom:.45rem"></div>', unsafe_allow_html=True)
 
 if st.session_state.active_page == 'Compte & alertes':
     page = 'Compte & alertes'
-    st.markdown('<a class="av-account-link" style="margin:0 0 .8rem 0" href="?view=markets">← Retour aux marchés</a>', unsafe_allow_html=True)
+    if st.button('← Retour aux marchés', key='back_to_markets'):
+        st.session_state.active_page = 'Marchés'
+        st.rerun()
 else:
     nav_default = 1 if st.session_state.active_page == 'Communauté' else 0
     page = st.radio('Navigation', ['Marchés','Simulation','Communauté'], horizontal=True, label_visibility='collapsed', index=(2 if st.session_state.active_page == 'Communauté' else 1 if st.session_state.active_page == 'Simulation' else 0), key='main_nav')
@@ -179,7 +180,9 @@ if page == 'Simulation':
     st.caption('Investis de l’argent fictif avec les vrais cours disponibles pour apprendre sans risquer ton argent. Aucun ordre réel n’est envoyé.')
     if not st.session_state.user:
         st.markdown('<div class="av-status"><b>Connecte-toi pour créer ton portefeuille virtuel.</b><br><span class="av-muted">Le portefeuille est lié à ton compte pour conserver tes opérations.</span></div>', unsafe_allow_html=True)
-        st.markdown('<a class="av-account-link" href="?view=account">Ouvrir mon compte</a>', unsafe_allow_html=True)
+        if st.button('Ouvrir mon compte', key='simulation_open_account'):
+            st.session_state.active_page = 'Compte & alertes'
+            st.rerun()
         st.stop()
     user=st.session_state.user
     beginner=(user.get('explanation_level')=='beginner')
@@ -317,12 +320,12 @@ if page == 'Compte & alertes':
             else:
                 try:
                     if mode == 'Créer un compte':
-                        user = create_user(email,password,display_name); st.session_state.user = user
+                        user = create_user(email,password,display_name); st.session_state.user = user; st.session_state['auth_ok'] = True
                         ok,_ = send_email(user['email'],'Bienvenue sur AngelVision',f'<h2>Bienvenue {user.get("display_name") or ""}</h2><p>Ton compte AngelVision est créé. Les alertes indiquent des conditions de marché à examiner ; elles ne constituent pas un ordre d’achat.</p>')
                         st.success('Compte créé.' + (' Email de bienvenue envoyé.' if ok else ''))
                     else:
                         user = authenticate_user(email,password)
-                        if user: st.session_state.user=user; st.success('Connexion réussie.')
+                        if user: st.session_state.user=user; st.session_state['auth_ok'] = True; st.success('Connexion réussie.')
                         else: st.error('Email ou mot de passe incorrect.')
                     st.rerun()
                 except Exception as e: st.error(str(e))
@@ -330,7 +333,7 @@ if page == 'Compte & alertes':
         user = st.session_state.user
         pseudo = user.get('display_name') or 'Utilisateur'
         c1,c2=st.columns([3,1]); c1.markdown(f'<div class="av-status"><b>{pseudo}</b><br><span style="font-size:.86rem">{user["email"]}</span></div>',unsafe_allow_html=True)
-        if c2.button('Déconnexion',use_container_width=True): st.session_state.user=None; st.rerun()
+        if c2.button('Déconnexion',use_container_width=True): st.session_state.user=None; st.session_state['auth_ok']=False; st.rerun()
         if production_storage_enabled():
             st.success('Supabase est activé : comptes et alertes sont persistants.')
         else:

@@ -1,4 +1,4 @@
-# AngelVision AI 2.7
+# AngelVision AI 2.8
 
 Version mobile-first d’AngelVision avec marchés, risque, communauté de marchés, comptes, alertes et **portefeuille d’entraînement**.
 
@@ -30,3 +30,9 @@ Réexécute `schema.sql` dans **Supabase → SQL Editor**. Le script ajoute de f
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+
+## Correctif 2.8
+- Navigation Compte ↔ Marchés sans rechargement complet de la page.
+- La connexion reste active pendant la navigation dans la session Streamlit.
+- Le bouton Compte et le retour utilisent désormais des boutons Streamlit au lieu de liens `?view=`.
