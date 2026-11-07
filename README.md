@@ -1,36 +1,29 @@
-# MarketVision AI
+# MarketVision AI 2.0
 
-Tableau de bord interactif Streamlit pour analyser des cours financiers, des indicateurs techniques, des risques historiques et des scénarios simulés.
+Application Streamlit adaptée aux écrans mobiles (iPhone, Android et ordinateur).
 
-## Démarrage
-
-1. Installer Python 3.10 ou plus récent.
-2. Dans ce dossier, exécuter :
+## Installation locale
 
 ```bash
-python -m venv .venv
-# macOS / Linux
-source .venv/bin/activate
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-3. Ouvrir l'adresse locale indiquée dans le terminal (généralement http://localhost:8501).
+## Mise à jour de l'application déjà publiée
+
+Dans le dépôt GitHub existant, **remplacez** `app.py`, `requirements.txt` et `README.md` par les fichiers fournis (sans créer de sous-dossier). Validez avec **Commit changes**. Streamlit Community Cloud redéploie normalement automatiquement le dépôt. Si besoin, ouvrez **Manage app** puis **Reboot app**.
+
+Sur iPhone, utilisez Safari > GitHub > dépôt > Add file > Upload files, et demandez la version pour ordinateur si nécessaire. Pour remplacer un fichier, GitHub peut exiger de supprimer l'ancien fichier puis d'importer le nouveau, ou de coller son contenu dans l'éditeur web.
 
 ## Fonctionnalités
 
-- Recherche de symboles Yahoo Finance et sélection d'actifs courants.
-- Historique quotidien, prix, variation, moyennes mobiles 20/50 jours et RSI 14.
-- Volatilité annualisée, drawdown maximal, VaR et CVaR historiques.
-- Simulation Monte-Carlo par bootstrap de rendements quotidiens, avec percentiles 5/50/95.
-- Mise en cache des cours pendant 5 minutes et actualisation manuelle.
+- Cours Yahoo Finance et indicateurs (MM20, MM50, RSI)
+- Volatilité, VaR 95 %, CVaR 95 %, drawdown
+- Simulations bootstrap Monte-Carlo
+- Comparaison multi-actifs
+- Alertes de seuil **à l'écran uniquement**
+- Explications automatiques **fondées sur des règles** (pas de LLM externe)
 
-## Limites importantes
+## Limites
 
-- **Pas de temps réel garanti** : Yahoo Finance peut publier des cours différés et limiter les requêtes. Le rafraîchissement ne supprime pas ce délai.
-- **Aucune prévision fiable garantie** : le bootstrap suppose que les rendements historiques sont représentatifs du futur ; il ne modélise pas explicitement les changements de régime, les corrélations temporelles ni les chocs inconnus.
-- **Pas de conseil financier** : les scénarios ne constituent pas des recommandations personnalisées. Aucun passage d'ordres.
-- Les valeurs affichées sont dans la devise native du symbole, sans conversion automatique en CHF.
-- Pour un usage professionnel, remplacer le fournisseur par une API de marché sous licence et ajouter monitoring, gestion des erreurs et tests de validation.
+Les données ne sont pas garanties en temps réel. Pas de notifications push ni d'analyse d'actualités par IA. Les simulations ne sont pas des probabilités prédictives calibrées. Aucune transaction n'est exécutée. Usage pédagogique, pas un conseil financier personnalisé.
