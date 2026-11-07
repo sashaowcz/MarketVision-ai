@@ -138,8 +138,30 @@ if strip:
     content=''.join(parts)
     st.markdown(f'<div class="av-ticker-wrap"><div class="av-ticker-track">{content}{content}</div></div>', unsafe_allow_html=True)
 
-st.markdown('''<div class="av-hero"><div class="av-kicker">Marchés • Risque • Tendances • Alertes</div><div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div><div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div></div>''', unsafe_allow_html=True)
-page = st.radio('Navigation', ['Marchés','Communauté','Compte & alertes'], horizontal=True, label_visibility='collapsed')
+# En-tête mobile : identité à gauche, compte à droite, directement sous la banderole.
+if 'active_page' not in st.session_state:
+    st.session_state.active_page = 'Marchés'
+
+head_left, head_right = st.columns([3.2, 1.15], vertical_alignment='center')
+with head_left:
+    st.markdown('''<div class="av-apphead"><div class="av-brand"><div class="av-logo">A</div><div><div class="av-kicker">Marchés • Risque • Tendances • Alertes</div><div class="av-name">AngelVision</div></div></div></div>''', unsafe_allow_html=True)
+with head_right:
+    account_text = (st.session_state.user.get('display_name') or 'Compte') if st.session_state.user else 'Compte'
+    if st.button(account_text, key='top_account_btn', use_container_width=True):
+        st.session_state.active_page = 'Compte & alertes'
+        st.rerun()
+
+st.markdown('<div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div><div style="height:.35rem;border-bottom:1px solid #f0e6e6;margin-bottom:.45rem"></div>', unsafe_allow_html=True)
+
+if st.session_state.active_page == 'Compte & alertes':
+    page = 'Compte & alertes'
+    if st.button('← Retour aux marchés', key='back_from_account'):
+        st.session_state.active_page = 'Marchés'
+        st.rerun()
+else:
+    nav_default = 1 if st.session_state.active_page == 'Communauté' else 0
+    page = st.radio('Navigation', ['Marchés','Communauté'], horizontal=True, label_visibility='collapsed', index=nav_default, key='main_nav')
+    st.session_state.active_page = page
 
 if page == 'Communauté':
     st.subheader('Marchés de la communauté')

@@ -1,45 +1,36 @@
-# AngelVision AI 2.4 — Marchés communautaires
+# AngelVision AI 2.5 — En-tête mobile corrigé
 
 Application Streamlit mobile-first pour iPhone, Android et ordinateur.
 
-## Nouveautés 2.4
+## Nouveautés 2.5
 
-- **Banderole de marché défilante** tout en haut : S&P 500, Nasdaq, Dow, SMI, Euro Stoxx 50, Bitcoin, or et pétrole WTI avec variation de la dernière séance disponible.
-- La communauté n'est plus un réseau social texte : **aucun post libre, aucune image, aucun commentaire**.
-- Un utilisateur connecté peut **proposer un marché** et choisir une période : 1 jour, 1 semaine, 1 mois, 6 mois ou 1 an.
-- Une proposition peut être envoyée **au public** ou **à un ami par pseudonyme**.
-- Les comptes connectés peuvent **liker un marché sur la période proposée**. Le compteur de likes est public.
-- Chaque carte affiche automatiquement la performance du marché sur la période sélectionnée.
-- Persistance des propositions et likes via **Supabase**, avec fallback SQLite pour le mode démo.
-- Le rangeslider des graphiques est plus fin sur mobile et les encadrés d'analyse utilisent davantage l'identité blanc/rouge AngelVision.
+- La **banderole de marchés est visible immédiatement à l'ouverture** : le header/toolbar Streamlit qui la recouvrait sur iPhone est masqué dans l'interface publique.
+- La banderole reste placée tout en haut de la page AngelVision, juste sous la zone Safari.
+- Nouveau header façon application : **logo AngelVision à gauche + bouton Compte à droite**, directement sous la banderole.
+- Le bouton Compte affiche le pseudonyme lorsque l'utilisateur est connecté.
+- **Compte & alertes** n'encombre plus la navigation principale : la navigation centrale reste focalisée sur **Marchés / Communauté**.
+- Depuis la page Compte, un bouton **Retour aux marchés** permet de revenir immédiatement à l'analyse.
+- Toutes les fonctions de la 2.4 restent présentes : banderole marchés, communauté sans texte libre, périodes, likes, partages publics/amis, recherche d'actifs, alertes, Supabase et emails.
 
 ## Fichiers à mettre à jour sur GitHub
 
-Remplace :
+Pour passer de 2.4 à 2.5, le changement principal est dans :
 
 - `app.py`
-- `angelvision_core.py`
-- `schema.sql`
 - `README.md`
 
-Garde aussi `alert_worker.py`, `requirements.txt` et `.github/workflows/alerts.yml`.
+Tu peux aussi remplacer tous les fichiers du ZIP par sécurité, sauf `__pycache__` et les fichiers `.pyc` qui ne doivent jamais être envoyés sur GitHub.
 
-## Mise à jour Supabase
+## Supabase
 
-Dans Supabase → **SQL Editor**, exécute à nouveau `schema.sql`.
-
-AngelVision 2.4 ajoute :
-
-- `market_proposals`
-- `market_likes`
-
-Le fichier conserve également les anciennes tables `posts` / `post_likes` afin de ne pas casser une base 2.3 existante, mais l'interface 2.4 ne les utilise plus.
+Aucun changement de schéma n'est nécessaire entre 2.4 et 2.5. Si `schema.sql` de la 2.4 a déjà été exécuté dans Supabase, tu n'as rien à refaire pour cette mise à jour.
 
 Les secrets restent dans Streamlit :
 
 - `SUPABASE_URL`
 - `SUPABASE_SECRET_KEY`
-- `RESEND_API_KEY` et `RESEND_FROM` pour les emails
+- `RESEND_API_KEY`
+- `RESEND_FROM`
 
 Ne publie jamais ces clés dans GitHub.
 
@@ -52,4 +43,4 @@ streamlit run app.py
 
 ## Important
 
-Les likes et propositions expriment uniquement l'intérêt de la communauté pour un marché et une période. Ils ne constituent pas une recommandation d'achat ou de vente. Les données Yahoo Finance peuvent être différées.
+Les données Yahoo Finance peuvent être différées. Les scores, alertes, simulations, propositions et likes servent à analyser ou découvrir des marchés ; ils ne constituent pas des recommandations d'achat ou de vente.
