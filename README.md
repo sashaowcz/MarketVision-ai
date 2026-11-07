@@ -1,63 +1,45 @@
-# AngelVision AI 2.2
+# AngelVision AI 2.3 — Communauté
 
-Version mobile-first pour iPhone, Android et ordinateur.
+Application Streamlit mobile-first pour iPhone, Android et ordinateur.
 
-## Nouveautés 2.2
+## Nouveautés 2.3
 
-- Identité visuelle **blanc + rouge AngelVision**.
-- Logo typographique rouge intégré à l'interface.
-- Graphiques mobiles plus naturels : **glisser = déplacer**, pincement = zoom, double-tap = reset, boutons de dézoom/reset et curseur temporel.
-- Pseudonyme lors de la création du compte.
-- Recherche Yahoo Finance pour retrouver des actions, ETF, indices, cryptomonnaies, devises et matières premières non présentes dans la sélection rapide.
-- Alertes disponibles sur les actifs recherchés.
-- Configuration Supabase actualisée pour les nouvelles **Secret keys** côté serveur.
-- Workflow GitHub Actions fourni pour vérifier les alertes environ chaque heure.
+- **Communauté AngelVision** inspirée d’un fil social : publications publiques, réponses et likes.
+- **Texte uniquement** : aucun upload d’image ou de fichier.
+- Une publication peut joindre une **fiche d’actif créée dans AngelVision** avec ticker, dernier cours, score de tendance et score de risque.
+- Lecture du fil sans compte ; connexion requise pour publier, répondre, aimer ou supprimer ses propres publications.
+- Messages limités à 500 caractères et affichés de façon échappée pour éviter l’injection HTML.
+- Persistance des publications et likes via **Supabase** ; fallback SQLite pour les essais locaux.
 
-## Mise à jour depuis l'iPhone
+## Déploiement
 
-1. Décompresse le ZIP dans l'app **Fichiers**.
-2. Dans ton dépôt GitHub, remplace `app.py`, `angelvision_core.py`, `alert_worker.py`, `requirements.txt`, `schema.sql` et `README.md`.
-3. Ajoute aussi le fichier caché `.github/workflows/alerts.yml`. Sur iPhone, GitHub peut masquer les dossiers commençant par un point : utilise Safari en **Version pour ordinateur** si nécessaire.
-4. Streamlit redéploiera automatiquement l'app.
+Remplace dans ton dépôt les fichiers :
 
-## Activer Supabase depuis l'iPhone
+- `app.py`
+- `angelvision_core.py`
+- `schema.sql`
+- `README.md`
 
-1. Dans Safari, ouvre `supabase.com` et crée un nouveau projet.
-2. Ouvre **SQL Editor** → **New query**.
-3. Copie tout le contenu de `schema.sql`, colle-le et appuie sur **Run**.
-4. Ouvre **Connect** ou **Settings → API Keys**.
-5. Copie le **Project URL**.
-6. Crée/copie une **Secret key** commençant par `sb_secret_` (côté serveur uniquement).
-7. Dans Streamlit : **Manage app → Settings → Secrets**, ajoute :
+Garde également `alert_worker.py`, `requirements.txt` et `.github/workflows/alerts.yml` de la version précédente.
 
-```toml
-SUPABASE_URL = "https://TON-PROJET.supabase.co"
-SUPABASE_SECRET_KEY = "sb_secret_..."
+### Mise à jour Supabase
+
+Si ton projet Supabase existe déjà, ouvre **SQL Editor** et exécute à nouveau le fichier `schema.sql`. Les commandes `create table if not exists` ajoutent les tables de communauté sans supprimer les comptes ni les alertes existantes.
+
+Les nouvelles tables sont :
+
+- `posts`
+- `post_likes`
+
+Le backend utilise `SUPABASE_URL` et `SUPABASE_SECRET_KEY` dans les Secrets Streamlit. Ne mets jamais la clé secrète dans GitHub.
+
+## Lancement local
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
-
-8. Sauvegarde puis redémarre l'app. Dans **Compte & alertes**, AngelVision doit afficher que Supabase est activé.
-
-> Ne mets jamais `SUPABASE_SECRET_KEY` dans un fichier GitHub public.
-
-## Emails avec Resend
-
-Ajoute également dans Streamlit Secrets :
-
-```toml
-RESEND_API_KEY = "re_..."
-RESEND_FROM = "AngelVision <alerts@ton-domaine.com>"
-```
-
-Pour GitHub Actions, ajoute les mêmes quatre valeurs dans : **Repository → Settings → Secrets and variables → Actions**.
-
-## Graphiques tactiles
-
-- 1 doigt : déplacement horizontal/vertical du graphique.
-- Pincement : zoom avant/arrière.
-- Double-tap : réinitialisation de la vue.
-- Barre d'outils : zoom +, zoom −, autoscale, reset.
-- Mini curseur sous les graphiques principaux pour choisir rapidement une période.
 
 ## Important
 
-Les données Yahoo Finance peuvent être différées. Les scores, simulations et alertes ne sont pas des conseils personnalisés et ne prédisent pas les marchés avec certitude.
+AngelVision est un outil d’analyse éducatif. Les publications communautaires sont du contenu utilisateur et ne constituent pas des recommandations d’investissement validées par AngelVision.

@@ -1,3 +1,4 @@
+import html
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -6,7 +7,7 @@ import streamlit as st
 from angelvision_core import (
     ASSETS, authenticate_user, create_alert, create_user, delete_alert,
     download_prices, indicators, list_alerts, production_storage_enabled,
-    search_assets, send_email,
+    search_assets, send_email, create_post, list_posts, toggle_like, delete_post,
 )
 
 RED = '#C62828'
@@ -41,6 +42,12 @@ button[data-baseweb="tab"][aria-selected="true"]{{color:var(--av-red)!important}
 .av-score strong{{font-size:1.1rem}}.av-muted{{color:#706666;font-size:.88rem;line-height:1.45}}
 .av-status{{background:var(--av-red-light);border:1px solid #f3cece;border-radius:14px;padding:12px 14px;color:#6e2323}}
 .av-search-card{{border:1px solid #eadede;border-radius:16px;padding:12px 14px;background:#fff}}
+.av-post{{border:1px solid #eadede;border-radius:18px;padding:14px 15px;background:#fff;margin:.55rem 0;box-shadow:0 3px 14px rgba(60,20,20,.025)}}
+.av-post-head{{display:flex;justify-content:space-between;gap:.5rem;align-items:center;margin-bottom:.45rem}}
+.av-post-user{{font-weight:720}} .av-post-time{{font-size:.76rem;color:#8a7d7d}}
+.av-post-body{{font-size:.97rem;line-height:1.5;white-space:pre-wrap;word-break:break-word}}
+.av-share{{margin-top:.7rem;border-left:4px solid var(--av-red);background:#fff7f7;border-radius:12px;padding:10px 12px}}
+.av-share-title{{font-weight:700}} .av-share-meta{{color:#6d5d5d;font-size:.82rem;margin-top:.15rem}}
 [data-testid="stAlert"]{{border-radius:14px!important}}
 hr{{border-color:#f0e6e6!important}}
 @media(max-width:650px){{.block-container{{padding:.65rem .65rem 5.4rem}}.av-logo{{width:38px;height:38px;border-radius:12px}}.av-name{{font-size:1.65rem}}h1{{font-size:1.7rem!important}}h2{{font-size:1.3rem!important}}h3{{font-size:1.08rem!important}}[data-testid="stHorizontalBlock"]{{gap:.42rem}}[data-testid="stMetric"]{{padding:11px}}[data-testid="stMetricValue"]{{font-size:1.35rem}}div[data-testid="stPlotlyChart"]{{max-width:100%;overflow:hidden}}.av-sub{{font-size:.9rem}}}}
@@ -93,8 +100,94 @@ def choose_symbol(prefix, default_label='MSCI World · URTH'):
 
 if 'user' not in st.session_state: st.session_state.user = None
 
-st.markdown('''<div class="av-hero"><div class="av-kicker">Marchés • Risque • Alertes</div><div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div><div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div></div>''', unsafe_allow_html=True)
-page = st.radio('Navigation', ['Marchés','Compte & alertes'], horizontal=True, label_visibility='collapsed')
+st.markdown('''<div class="av-hero"><div class="av-kicker">Marchés • Risque • Communauté • Alertes</div><div class="av-brand"><div class="av-logo">A</div><div class="av-name">AngelVision</div></div><div class="av-sub">Une lecture claire des marchés, pensée pour iPhone. Blanc pour la lisibilité, rouge AngelVision pour les actions et les signaux à examiner.</div></div>''', unsafe_allow_html=True)
+page = st.radio('Navigation', ['Marchés','Communauté','Compte & alertes'], horizontal=True, label_visibility='collapsed')
+
+if page == 'Communauté':
+    st.subheader('Communauté AngelVision')
+    st.caption('Un fil texte uniquement. Pas d’images ni de fichiers : tu peux écrire librement et joindre seulement des données générées dans AngelVision.')
+
+    if st.session_state.user:
+        with st.container(border=True):
+            st.markdown('### Publier')
+            body = st.text_area('Ton message', max_chars=500, placeholder='Partage une idée, une question ou ton analyse…', key='community_body')
+            attach_mode = st.radio('Ajouter', ['Texte uniquement','Un actif AngelVision'], horizontal=True, key='community_attach')
+            shared = None
+            if attach_mode == 'Un actif AngelVision':
+                share_symbol, share_label = choose_symbol('community_share', 'MSCI World · URTH')
+                if share_symbol:
+                    try:
+                        share_df = prices(share_symbol, '6mo')
+                        if len(share_df) >= 65:
+                            share_m = indicators(share_df)
+                            share_price = float(share_m['close'].iloc[-1])
+                            shared = {'symbol': share_symbol, 'label': share_label, 'price': share_price,
+                                      'trend_score': share_m['trend_score'], 'risk_score': share_m['risk_score']}
+                            st.markdown(f'<div class="av-share"><div class="av-share-title">{html.escape(str(share_label))} · {html.escape(str(share_symbol))}</div><div class="av-share-meta">Cours {share_price:,.2f} · Tendance {share_m["trend_score"]}/100 · Risque {share_m["risk_score"]}/100</div></div>', unsafe_allow_html=True)
+                        else:
+                            st.warning('Pas assez de données pour créer la fiche de cet actif.')
+                    except Exception:
+                        st.warning('Impossible de charger cet actif pour le moment.')
+            if st.button('Publier', type='primary', use_container_width=True, key='publish_post'):
+                try:
+                    create_post(st.session_state.user['id'], body, shared=shared)
+                    st.session_state.community_body = ''
+                    st.success('Publication envoyée.')
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+    else:
+        st.info('Connecte-toi dans « Compte & alertes » pour publier, répondre ou aimer. Le fil reste lisible sans compte.')
+
+    posts = list_posts(120)
+    top = [p for p in posts if not p.get('parent_id')]
+    replies_by_parent = {}
+    for p0 in posts:
+        if p0.get('parent_id'):
+            replies_by_parent.setdefault(p0['parent_id'], []).append(p0)
+
+    if not top:
+        st.info('Aucune publication pour le moment. Sois le premier à lancer une discussion.')
+    for post in top:
+        name = html.escape(str(post.get('display_name') or 'Utilisateur'))
+        body_safe = html.escape(str(post.get('body') or ''))
+        when = html.escape(str(post.get('created_at') or '').replace('T',' ')[:16])
+        st.markdown(f'<div class="av-post"><div class="av-post-head"><span class="av-post-user">@{name}</span><span class="av-post-time">{when}</span></div><div class="av-post-body">{body_safe}</div>', unsafe_allow_html=True)
+        if post.get('shared_symbol'):
+            lbl = html.escape(str(post.get('shared_label') or post.get('shared_symbol')))
+            sym = html.escape(str(post.get('shared_symbol')))
+            price = post.get('shared_price'); trend = post.get('shared_trend'); risk = post.get('shared_risk')
+            meta=[]
+            if price is not None: meta.append(f'Cours {float(price):,.2f}')
+            if trend is not None: meta.append(f'Tendance {int(trend)}/100')
+            if risk is not None: meta.append(f'Risque {int(risk)}/100')
+            st.markdown(f'<div class="av-share"><div class="av-share-title">{lbl} · {sym}</div><div class="av-share-meta">{" · ".join(meta)}</div></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        user = st.session_state.user
+        likes = int(post.get('like_count') or 0)
+        if user:
+            liked = user['id'] in (post.get('like_user_ids') or [])
+            c1,c2,c3 = st.columns([1.25,1.35,3])
+            if c1.button(('♥' if liked else '♡') + f' {likes}', key=f'like_{post["id"]}', use_container_width=True):
+                toggle_like(user['id'], post['id']); st.rerun()
+            with c2.popover('Répondre', use_container_width=True):
+                with st.form(f'reply_form_{post["id"]}'):
+                    reply = st.text_area('Réponse', max_chars=500, key=f'reply_{post["id"]}', label_visibility='collapsed', placeholder='Écrire une réponse…')
+                    if st.form_submit_button('Envoyer', use_container_width=True):
+                        create_post(user['id'], reply, parent_id=post['id']); st.rerun()
+            if post.get('user_id') == user['id'] and c3.button('Supprimer', key=f'delpost_{post["id"]}'):
+                delete_post(user['id'], post['id']); st.rerun()
+        else:
+            st.caption(f'♡ {likes}')
+
+        replies = list(reversed(replies_by_parent.get(post['id'], [])))
+        for rep in replies:
+            rname = html.escape(str(rep.get('display_name') or 'Utilisateur'))
+            rbody = html.escape(str(rep.get('body') or ''))
+            st.markdown(f'<div style="margin-left:1rem;border-left:2px solid #f0dede;padding:.35rem 0 .35rem .8rem"><b>@{rname}</b><br><span style="white-space:pre-wrap">{rbody}</span></div>', unsafe_allow_html=True)
+        st.divider()
+    st.stop()
 
 if page == 'Compte & alertes':
     st.subheader('Compte AngelVision')

@@ -82,6 +82,23 @@ def init_local_db() -> None:
         created_at TEXT NOT NULL,
         FOREIGN KEY(user_id) REFERENCES users(id)
     )''')
+    con.execute("""CREATE TABLE IF NOT EXISTS posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        parent_id INTEGER,
+        body TEXT NOT NULL,
+        shared_symbol TEXT, shared_label TEXT, shared_price REAL,
+        shared_trend INTEGER, shared_risk INTEGER,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(parent_id) REFERENCES posts(id)
+    )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS post_likes (
+        post_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY(post_id,user_id),
+        FOREIGN KEY(post_id) REFERENCES posts(id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )""")
     con.commit(); con.close()
 
 
@@ -259,3 +276,64 @@ def send_email(to_email: str, subject: str, html: str) -> tuple[bool,str]:
         return False, 'Resend non configuré'
     r = requests.post('https://api.resend.com/emails', headers={'Authorization':f'Bearer {api_key}','Content-Type':'application/json'}, json={'from':sender,'to':[to_email],'subject':subject,'html':html}, timeout=20)
     return r.ok, (r.json().get('id','envoyé') if r.ok else r.text[:300])
+
+def create_post(user_id: int, body: str, parent_id: int | None = None, shared: dict | None = None) -> dict:
+    body = (body or '').strip()
+    if not body:
+        raise ValueError('Le message est vide.')
+    if len(body) > 500:
+        raise ValueError('500 caractères maximum.')
+    shared = shared or {}
+    row = {'user_id': user_id, 'parent_id': parent_id, 'body': body,
+           'shared_symbol': shared.get('symbol'), 'shared_label': shared.get('label'),
+           'shared_price': shared.get('price'), 'shared_trend': shared.get('trend_score'),
+           'shared_risk': shared.get('risk_score'), 'created_at': utcnow_iso()}
+    if production_storage_enabled():
+        rows = _sb('posts', 'POST', payload=row, prefer='return=representation')
+        return rows[0]
+    init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
+    cur = con.execute("INSERT INTO posts(user_id,parent_id,body,shared_symbol,shared_label,shared_price,shared_trend,shared_risk,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        (row['user_id'],row['parent_id'],row['body'],row['shared_symbol'],row['shared_label'],row['shared_price'],row['shared_trend'],row['shared_risk'],row['created_at']))
+    con.commit(); post = dict(con.execute('SELECT * FROM posts WHERE id=?',(cur.lastrowid,)).fetchone()); con.close(); return post
+
+
+def list_posts(limit: int = 80) -> list[dict]:
+    limit = max(1, min(int(limit), 200))
+    if production_storage_enabled():
+        rows = _sb('posts', params={'select':'*,users(display_name),post_likes(user_id)','order':'created_at.desc','limit':str(limit)}) or []
+        out=[]
+        for r in rows:
+            users = r.get('users') or {}; likes = r.get('post_likes') or []
+            r['display_name'] = users.get('display_name') or 'Utilisateur'
+            r['like_user_ids'] = [x.get('user_id') for x in likes if x.get('user_id') is not None]
+            r['like_count'] = len(r['like_user_ids'])
+            r.pop('users',None); r.pop('post_likes',None); out.append(r)
+        return out
+    init_local_db(); con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT p.*,u.display_name,(SELECT COUNT(*) FROM post_likes l WHERE l.post_id=p.id) AS like_count FROM posts p JOIN users u ON u.id=p.user_id ORDER BY p.created_at DESC LIMIT ?",(limit,)).fetchall()
+    out=[]
+    for row in rows:
+        d=dict(row); d['like_user_ids']=[x[0] for x in con.execute('SELECT user_id FROM post_likes WHERE post_id=?',(d['id'],)).fetchall()]; out.append(d)
+    con.close(); return out
+
+
+def toggle_like(user_id: int, post_id: int) -> bool:
+    if production_storage_enabled():
+        existing = _sb('post_likes', params={'post_id':f'eq.{post_id}','user_id':f'eq.{user_id}','select':'post_id'}) or []
+        if existing:
+            _sb('post_likes','DELETE',params={'post_id':f'eq.{post_id}','user_id':f'eq.{user_id}'},prefer='return=minimal'); return False
+        _sb('post_likes','POST',payload={'post_id':post_id,'user_id':user_id,'created_at':utcnow_iso()},prefer='return=minimal'); return True
+    init_local_db(); con = sqlite3.connect(DB_PATH)
+    exists = con.execute('SELECT 1 FROM post_likes WHERE post_id=? AND user_id=?',(post_id,user_id)).fetchone()
+    if exists:
+        con.execute('DELETE FROM post_likes WHERE post_id=? AND user_id=?',(post_id,user_id)); liked=False
+    else:
+        con.execute('INSERT INTO post_likes(post_id,user_id,created_at) VALUES(?,?,?)',(post_id,user_id,utcnow_iso())); liked=True
+    con.commit(); con.close(); return liked
+
+
+def delete_post(user_id: int, post_id: int) -> None:
+    if production_storage_enabled():
+        _sb('posts','DELETE',params={'id':f'eq.{post_id}','user_id':f'eq.{user_id}'},prefer='return=minimal'); return
+    init_local_db(); con = sqlite3.connect(DB_PATH)
+    con.execute('DELETE FROM post_likes WHERE post_id=?',(post_id,)); con.execute('DELETE FROM posts WHERE parent_id=?',(post_id,)); con.execute('DELETE FROM posts WHERE id=? AND user_id=?',(post_id,user_id)); con.commit(); con.close()
