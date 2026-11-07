@@ -4,6 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from forecast_engine import forecast_market
+from external_context import build_internet_context
 from angelvision_core import (
     ASSETS, authenticate_user, create_alert, create_user, delete_alert,
     download_prices, indicators, list_alerts, production_storage_enabled,
@@ -341,8 +343,10 @@ if page == 'Compte & alertes':
 
         st.markdown('### Niveau d’explication')
         current_level = user.get('explanation_level') or 'standard'
-        level_label = st.radio('Choisis le vocabulaire utilisé dans AngelVision', ['Débutant','Standard'], horizontal=True, index=0 if current_level=='beginner' else 1)
-        new_level = 'beginner' if level_label=='Débutant' else 'standard'
+        level_options=['Débutant','Standard','Avancé']
+        level_index={'beginner':0,'standard':1,'advanced':2}.get(current_level,1)
+        level_label = st.radio('Choisis le vocabulaire utilisé dans AngelVision', level_options, horizontal=True, index=level_index)
+        new_level = {'Débutant':'beginner','Standard':'standard','Avancé':'advanced'}[level_label]
         if new_level != current_level:
             update_explanation_level(user['id'],new_level)
             st.session_state.user['explanation_level']=new_level
@@ -350,6 +354,8 @@ if page == 'Compte & alertes':
             st.rerun()
         if new_level=='beginner':
             st.caption('AngelVision utilise des phrases simples et explique les termes financiers au fur et à mesure.')
+        elif new_level=='advanced':
+            st.caption('AngelVision affiche davantage de métriques quantitatives, de backtests et d’incertitude statistique.')
         else:
             st.caption('AngelVision utilise le vocabulaire financier standard.')
 
@@ -408,7 +414,7 @@ if len(df)<65: st.error('Pas assez de données pour cet actif. Choisis un histor
 m=indicators(df); close=m['close']; last=float(close.iloc[-1]); change=(last/float(close.iloc[-2])-1)*100
 st.caption(f"{asset_label} · {symbol} · Dernière séance : {pd.Timestamp(close.index[-1]).strftime('%d/%m/%Y')} · devise native de l’actif")
 
-tabs=st.tabs(['Marché','Risque','Scénarios','Comparer'])
+tabs=st.tabs(['Marché','Risque','Scénarios','Prévision IA','Comparer'])
 with tabs[0]:
     c1,c2=st.columns(2); c1.metric('Dernier cours',f'{last:,.2f}',f'{change:+.2f}% / séance'); c2.metric('RSI (14)',f"{m['rsi']:.1f}")
     label = 'Haussier' if m['trend_score']>=65 else 'Baissier' if m['trend_score']<=35 else 'Neutre'
@@ -441,6 +447,112 @@ with tabs[2]:
     for c,label0,val in zip((c1,c2,c3),('Défavorable P5','Médian P50','Favorable P95'),amounts): c.metric(label0,f'{val:,.0f}')
     st.warning(f"Dans ce modèle, {np.mean(finals>last):.1%} des trajectoires finissent au-dessus du cours actuel. Ce pourcentage dépend entièrement des hypothèses du modèle.")
 with tabs[3]:
+    st.subheader('Angel Forecast Lab')
+    st.caption('Prévision expérimentale pour le portefeuille fictif. Le modèle est entraîné sur l’historique puis évalué sur des périodes qu’il n’a pas vues.')
+    forecast_horizon = st.radio('Horizon de prévision', [5,20,60], horizontal=True, format_func=lambda x:{5:'1 semaine',20:'1 mois',60:'3 mois'}[x], key='forecast_horizon')
+    if period not in ('5y',):
+        st.info('Pour entraîner le modèle correctement, AngelVision utilise automatiquement jusqu’à 10 ans d’historique, indépendamment du graphique affiché.')
+    include_internet = st.toggle('Ajouter le contexte Internet (actualités, macro et données publiques SEC)', value=True, key='forecast_internet')
+    if st.button('Entraîner, backtester et analyser', type='primary', use_container_width=True, key='run_forecast'):
+        try:
+            with st.spinner('Entraînement chronologique et backtest…'):
+                train_df = prices(symbol, '10y')
+                result = forecast_market(train_df, forecast_horizon)
+            internet = None
+            if include_internet:
+                with st.spinner('Lecture des actualités et données publiques…'):
+                    internet = build_internet_context(asset_label, symbol)
+            st.session_state['forecast_result'] = (symbol, result, internet)
+        except Exception as e:
+            st.error(f'Prévision indisponible : {e}')
+    cached = st.session_state.get('forecast_result')
+    if cached and cached[0] == symbol:
+        result = cached[1]
+        internet = cached[2] if len(cached) > 2 else None
+        direction = 'hausse' if result.expected_return >= 0 else 'baisse'
+        c1,c2,c3=st.columns(3)
+        c1.metric('Rendement prévu', f'{result.expected_return:+.1%}')
+        c2.metric('Probabilité de hausse', f'{result.probability_up:.0%}')
+        c3.metric('Confiance du moteur', f'{result.confidence_score}/100')
+        signal_color = '#6b2323' if result.signal == 'ABSTENTION' else '#171717'
+        reason = f"<br><span class='av-muted'>Pourquoi l’IA s’abstient : {html.escape(result.abstention_reason)}</span>" if result.signal == 'ABSTENTION' and result.abstention_reason else ''
+        st.markdown(f'<div class="av-score"><strong style="color:{signal_color}">{result.signal}</strong><br><span class="av-muted">Scénario central : {direction} · intervalle empirique : {result.low_return:+.1%} à {result.high_return:+.1%} sur {result.horizon} séances · régime détecté : {html.escape(result.regime)}.</span>{reason}</div>', unsafe_allow_html=True)
+        b1,b2,b3=st.columns(3)
+        b1.metric('Précision directionnelle', f'{result.direction_accuracy:.1%}', f'benchmark {result.baseline_accuracy:.1%}')
+        b2.metric('Erreur moyenne absolue', f'{result.mae:.2%}', f'benchmark {result.baseline_mae:.2%}')
+        b3.metric('Qualité du backtest', f'{result.quality_score}/100')
+        q1,q2,q3=st.columns(3)
+        q1.metric('Accord entre modèles', f'{result.model_agreement:.0%}')
+        q2.metric('AUC', 'n/a' if result.auc is None else f'{result.auc:.3f}')
+        q3.metric('Couverture signaux forts', f'{result.confident_coverage:.0%}', 'n/a' if result.confident_accuracy is None else f'précision {result.confident_accuracy:.1%}')
+        st.caption(f'Brier : {result.brier:.3f} (plus bas = mieux)' + ('' if result.regime_accuracy is None else f' · précision historique dans ce régime : {result.regime_accuracy:.1%}'))
+        bt=result.backtest.copy()
+        if not bt.empty:
+            fig_bt=go.Figure()
+            fig_bt.add_trace(go.Scatter(x=bt.index,y=bt['actual_return']*100,name='Réel',line=dict(color=INK,width=1.5)))
+            fig_bt.add_trace(go.Scatter(x=bt.index,y=bt['predicted_return']*100,name='Prévu',line=dict(color=RED,width=1.5)))
+            fig_bt.update_yaxes(title='Rendement futur (%)')
+            st.plotly_chart(plot_style(fig_bt, height=300), use_container_width=True, config=PLOT_CONFIG)
+        st.caption(result.feature_importance_note)
+
+        if internet is not None:
+            st.subheader('Contexte Internet actuel')
+            model_edge = (result.probability_up - 0.5) * 2.0
+            context_edge = float(internet.context_score)
+            composite = float(np.clip(0.75*model_edge + 0.25*context_edge, -1, 1))
+            composite_score = int(round((composite + 1) * 50))
+            agreement = 'accord' if model_edge == 0 or context_edge == 0 or np.sign(model_edge) == np.sign(context_edge) else 'désaccord'
+            strength = 'faible' if abs(composite) < .18 else 'moyen' if abs(composite) < .42 else 'fort'
+            st.markdown(f'<div class="av-score"><strong>Angel Forecast Score : {composite_score}/100</strong><br><span class="av-muted">Signal composite {strength} · {agreement} entre le modèle historique et le contexte externe. Ce score n’est pas une probabilité calibrée.</span></div>', unsafe_allow_html=True)
+            c1,c2,c3=st.columns(3)
+            c1.metric('Actualités', f'{internet.news_score:+.2f}', f'{internet.news_count} articles')
+            c2.metric('Macro', f'{internet.macro_score:+.2f}')
+            c3.metric('Insiders publics', f'{internet.insider_score:+.2f}')
+            if internet.event_risk >= .55:
+                st.warning('Beaucoup d’événements récents sont détectés. L’incertitude est élevée : les relations historiques peuvent moins bien fonctionner.')
+
+            if internet.news_items:
+                with st.expander('Actualités récentes utilisées comme contexte'):
+                    for item in internet.news_items[:10]:
+                        title = html.escape(str(item.get('title') or ''))
+                        url = str(item.get('url') or '')
+                        domain = html.escape(str(item.get('domain') or ''))
+                        if url:
+                            st.markdown(f'- [{title}]({url}) — {domain}')
+                        else:
+                            st.write(f'• {title} — {domain}')
+                    st.caption('Le sentiment des titres est une heuristique simple et peut se tromper, notamment avec l’ironie, les négations et les langues différentes.')
+
+            if internet.macro_details:
+                with st.expander('Contexte macro FRED'):
+                    rows=[]
+                    for k,v in internet.macro_details.items():
+                        if isinstance(v, float):
+                            rows.append({'Indicateur':k,'Valeur':round(v,4)})
+                    if rows: st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+            if internet.insider_details:
+                with st.expander('Transactions d’initiés publiquement déclarées (SEC Form 4)'):
+                    d=internet.insider_details
+                    st.write(f"Achats déclarés détectés : **{d.get('purchase_transactions',0)}** · Ventes déclarées détectées : **{d.get('sale_transactions',0)}**")
+                    st.caption('Uniquement les transactions rendues publiques via la SEC. Cela ne représente ni tous les investisseurs ni les portefeuilles privés.')
+                    filings=d.get('recent_material_filings') or []
+                    if filings:
+                        st.write('Dépôts récents : ' + ', '.join(f"{x.get('form')} ({x.get('date')})" for x in filings[:6]))
+
+            if internet.sources_missing:
+                with st.expander('Sources non disponibles / configuration nécessaire'):
+                    for x in internet.sources_missing: st.write('• '+x)
+
+        if result.signal == 'ABSTENTION':
+            st.warning('Le moteur refuse de produire un signal directionnel exploitable pour le paper trading : ' + result.abstention_reason + '.')
+        elif result.direction_accuracy <= result.baseline_accuracy or result.mae >= result.baseline_mae:
+            st.warning('Le moteur affiche un scénario, mais le backtest ne bat pas clairement tous les benchmarks. Considère ce signal comme faible.')
+        else:
+            st.info('Le moteur a montré un avantage historique sur ce backtest, mais cet avantage peut disparaître dans le futur. Le mode reste limité au paper trading.')
+        st.markdown('<div class="av-status"><b>Important :</b> Angel Forecast est un outil de recherche et de paper trading, pas un conseiller financier. Une IA peut avoir l’air très convaincante et néanmoins se tromper brutalement lors d’une crise, d’une annonce surprise ou d’un changement de régime. N’investis jamais de l’argent réel uniquement d’après cette IA : décide selon ta propre analyse, ta situation et ton niveau de risque. AngelVision ne peut pas garantir un gain ni supprimer le risque de perte.</div>', unsafe_allow_html=True)
+
+with tabs[4]:
     selected=st.multiselect('Choisir jusqu’à 5 actifs',list(ASSETS),default=['MSCI World · URTH','S&P 500 · SPY','Or · GC=F'],max_selections=5)
     if st.button('Comparer',use_container_width=True):
         rows=[]; curves={}

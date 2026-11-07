@@ -214,7 +214,7 @@ def authenticate_user(email: str, password: str) -> dict | None:
 
 
 def update_explanation_level(user_id: int, level: str) -> None:
-    level = 'beginner' if level == 'beginner' else 'standard'
+    level = level if level in ('beginner','standard','advanced') else 'standard'
     if production_storage_enabled():
         _sb('users', 'PATCH', params={'id': f'eq.{user_id}'}, payload={'explanation_level': level}, prefer='return=minimal')
         return
